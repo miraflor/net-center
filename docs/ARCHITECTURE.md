@@ -1,6 +1,6 @@
 # Architecture
 
-`netcenter` is deliberately layered so the mathematics, routing, and GIS code
+`net-center` is deliberately layered so the mathematics, routing, and GIS code
 can be reviewed independently.
 
 ## Execution path

@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "netcenter"
+name = "net-center"
 version = "0.1.0"
 description = "Exact absolute 1-center and weighted 1-median tools for undirected road networks"
 readme = "README.md"
@@ -42,10 +42,10 @@ dev = [
 ]
 
 [project.scripts]
-netcenter = "netcenter.cli:main"
+net-center = "net_center.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["netcenter*"]
+include = ["net_center*"]
 
 [tool.ruff]
 line-length = 92

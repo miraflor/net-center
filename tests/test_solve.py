@@ -4,8 +4,8 @@ import pytest
 gpd = pytest.importorskip("geopandas")
 from shapely.geometry import LineString  # noqa: E402
 
-from netcenter.graph import build_network  # noqa: E402
-from netcenter.solve import _coalesce_demands, solve
+from net_center.graph import build_network  # noqa: E402
+from net_center.solve import _coalesce_demands, solve
 
 
 def make_path():
@@ -43,7 +43,7 @@ def test_weight_length_is_checked_before_shortest_paths():
 
 
 def test_public_solve_symbol_is_callable():
-    from netcenter import solve as public_solve
+    from net_center import solve as public_solve
 
     assert callable(public_solve)
 

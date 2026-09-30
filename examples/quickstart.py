@@ -4,7 +4,7 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import LineString
 
-from netcenter import build_network, snap_points, solve
+from net_center import build_network, snap_points, solve
 
 # A simple 10 m path with one junction at x=3.
 roads = gpd.GeoDataFrame(

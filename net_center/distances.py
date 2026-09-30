@@ -20,7 +20,7 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
 
-from netcenter import _checks
+from net_center import _checks
 
 MIN_PARALLEL_WORK = 20_000_000
 DEFAULT_TEMP_MB = 256
@@ -45,12 +45,12 @@ def _validate_graph(graph: csr_matrix) -> csr_matrix:
         if (graph.data < 0).any():
             raise ValueError("Dijkstra requires non-negative edge lengths")
 
-    # netcenter models an undirected network, which is only meaningful when the
+    # net-center models an undirected network, which is only meaningful when the
     # cost matrix itself is symmetric.  Fail here rather than guess.
     delta = graph - graph.T
     if delta.nnz and not np.allclose(delta.data, 0.0, rtol=1e-12, atol=1e-12):
         raise ValueError(
-            "graph must be symmetric because netcenter models an undirected network"
+            "graph must be symmetric because net-center models an undirected network"
         )
     return graph
 

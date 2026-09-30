@@ -8,7 +8,7 @@ gpd = pytest.importorskip("geopandas")
 shapely_geom = pytest.importorskip("shapely.geometry")
 LineString = shapely_geom.LineString
 
-from netcenter.graph import build_network, snap_points  # noqa: E402
+from net_center.graph import build_network, snap_points  # noqa: E402
 
 UTM51N = "EPSG:32651"
 
@@ -133,7 +133,7 @@ def test_snap_points_rejects_nonfinite_coordinates():
 
 
 def test_end_to_end_solve_finds_known_midpoint():
-    from netcenter.solve import solve
+    from net_center.solve import solve
 
     net = build_network(gdf([LineString([(0, 0), (3, 0)]), LineString([(3, 0), (10, 0)])]))
     ends, _ = snap_points(net, np.array([[0.0, 0.0], [10.0, 0.0]]))
@@ -341,7 +341,7 @@ def test_node_numbering_follows_snap_cells_as_in_v010():
 def test_vectorised_cutting_matches_a_piece_by_piece_reference():
     import shapely
 
-    from netcenter.graph import _cut_lines
+    from net_center.graph import _cut_lines
 
     rng = np.random.default_rng(0)
     lines = [

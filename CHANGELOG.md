@@ -32,8 +32,17 @@ Changes from a code review in September 2026. The version number is still 0.1.0.
 
 ### Internal
 
-- New `netcenter/_checks.py` holds the input checks that were repeated in four modules.
+- New `net_center/_checks.py` holds the input checks that were repeated in four modules.
 - New tests for every fix above, the pruning bounds, the parallel sweep branch, and the command line (`tests/test_cli.py`): 111 tests in total.
+
+### Renamed
+
+This change is separate from the code review above.
+
+- The project is now `net-center`, matching the GitHub repository `miraflor/net-center` (GitHub redirects the old `miraflor/netcenter` URL). The distribution is `net-center`, the import package is `net_center` (the directory `netcenter/` became `net_center/`), and the command is `net-center`. Version 0.1.0 was published under the name `netcenter`; code that imports `netcenter` or runs the `netcenter` command must be updated.
+- `LICENSE` now names the copyright holder as "net-center contributors".
+- `README.md` has a per-step provenance table in "Literature and algorithmic lineage" and two more references (Bentley and Ottmann, 1979; Virtanen et al., 2020).
+- `docs/TECHNICAL_NOTE.pdf` was rebuilt from `docs/TECHNICAL_NOTE.tex` after the rename.
 
 ## 0.1.0 — 2026-09-24
 

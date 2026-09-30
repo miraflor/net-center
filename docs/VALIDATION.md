@@ -66,7 +66,7 @@ checks, GIS/topology regressions, memory/execution checks, and packaging checks.
 ## Packaging checks
 
 - the public `solve` symbol remains callable;
-- exported `netcenter.__version__` matches installed package metadata;
+- exported `net_center.__version__` matches installed package metadata;
 - CI lints, compiles, tests, exercises the CLI, and builds the package.
 
 ## Run locally

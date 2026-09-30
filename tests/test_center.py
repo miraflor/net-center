@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 from scipy.sparse.csgraph import dijkstra
 
-from netcenter.center import absolute_center, vertex_center, weighted_median
-from netcenter.topology import adjacency_from_edges as make_csr
+from net_center.center import absolute_center, vertex_center, weighted_median
+from net_center.topology import adjacency_from_edges as make_csr
 
 
 def full_D(n, u, w, length):
@@ -212,14 +212,14 @@ def test_fractional_topology_indices_are_rejected_instead_of_truncated():
 
 
 def _exact_edge_minima(D, u, w, length):
-    from netcenter.center import _sweep
+    from net_center.center import _sweep
 
     return _sweep(D, u, w, length, 10**6)[0]
 
 
 @pytest.mark.parametrize("seed", range(10))
 def test_both_pruning_bounds_are_below_the_exact_edge_minimum(seed):
-    from netcenter.center import _eccentricity_bound, _endpoint_bound
+    from net_center.center import _eccentricity_bound, _endpoint_bound
 
     rng = np.random.default_rng(100 + seed)
     u, w, length = random_network(rng, n=40)
@@ -248,7 +248,7 @@ def _cycle(n=24):
 def test_parallel_sweep_branch_matches_serial(backend, monkeypatch):
     # On a cycle every point has the same eccentricity, so no edge can be
     # pruned; the v0.1.0 tests never reached the parallel branch.
-    import netcenter.center as center
+    import net_center.center as center
 
     u, w, length = _cycle()
     D = full_D(len(u), u, w, length)

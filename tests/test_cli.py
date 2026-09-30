@@ -8,7 +8,7 @@ gpd = pytest.importorskip("geopandas")
 pytest.importorskip("pyogrio")
 from shapely.geometry import LineString, Point  # noqa: E402
 
-from netcenter.cli import main  # noqa: E402
+from net_center.cli import main  # noqa: E402
 
 UTM51N = "EPSG:32651"
 
@@ -66,7 +66,7 @@ def test_weight_field_must_exist(roads, tmp_path):
 
 
 def test_cli_and_python_api_agree(roads):
-    from netcenter import build_network, solve
+    from net_center import build_network, solve
 
     net = build_network(str(roads))
     api = solve(net)

@@ -1,7 +1,7 @@
 # Review notes for v0.1.0
 
 This file records the pre-release review and hardening work that led to the
-first public release of `netcenter`, v0.1.0.
+first public release of `netcenter` (now `net-center`), v0.1.0.
 
 > **Note added in September 2026.** A later review found that two fixes
 > recorded here were incomplete in v0.1.0: ring closure (sections 3.2 and 3.3)

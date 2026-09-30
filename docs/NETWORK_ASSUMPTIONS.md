@@ -1,7 +1,7 @@
 # Network assumptions
 
 These assumptions matter more than any command-line switch. Read them before
-applying `netcenter` to a new road dataset.
+applying `net-center` to a new road dataset.
 
 ## 1. The graph is undirected
 
@@ -46,7 +46,7 @@ interior shared vertices.
 CLI equivalent:
 
 ```bash
-netcenter roads.gpkg --no-shared-vertex-noding
+net-center roads.gpkg --no-shared-vertex-noding
 ```
 
 ### Full planar noding
@@ -61,14 +61,14 @@ linework where every crossing is connected.
 CLI equivalent:
 
 ```bash
-netcenter roads.gpkg --node-crossings
+net-center roads.gpkg --node-crossings
 ```
 
 Do not use this blindly on bridges, tunnels, or grade-separated roads.
 
 ## 4. A shared vertex is evidence, not an attribute model
 
-`netcenter` does not inspect OSM `bridge`, `tunnel`, `layer`, turn-restriction,
+`net-center` does not inspect OSM `bridge`, `tunnel`, `layer`, turn-restriction,
 or one-way attributes. It only sees line geometry at graph-construction time.
 
 If the source contains a geometrically shared vertex that should *not* permit a

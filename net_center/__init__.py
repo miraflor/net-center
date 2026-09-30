@@ -7,25 +7,25 @@ GeoPandas/Shapely stack.
 
 from importlib.metadata import PackageNotFoundError, version
 
-from netcenter.center import (
+from net_center.center import (
     CenterResult,
     absolute_center,
     vertex_center,
     vertex_eccentricity,
     weighted_median,
 )
-from netcenter.distances import distance_matrix, estimate_distance_matrix_mb
-from netcenter.solve import solve
+from net_center.distances import distance_matrix, estimate_distance_matrix_mb
+from net_center.solve import solve
 
 try:
-    __version__ = version("netcenter")
+    __version__ = version("net-center")
 except PackageNotFoundError:  # Running directly from an uninstalled source tree.
     __version__ = "0+unknown"
 
 _LAZY = {
-    "Network": "netcenter.graph",
-    "build_network": "netcenter.graph",
-    "snap_points": "netcenter.graph",
+    "Network": "net_center.graph",
+    "build_network": "net_center.graph",
+    "snap_points": "net_center.graph",
 }
 
 __all__ = [

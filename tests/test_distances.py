@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from netcenter.distances import distance_matrix, estimate_distance_matrix_mb
-from netcenter.topology import adjacency_from_edges
+from net_center.distances import distance_matrix, estimate_distance_matrix_mb
+from net_center.topology import adjacency_from_edges
 
 
 def path_graph(n=20):
@@ -93,7 +93,7 @@ def test_parallel_request_splits_work_that_fits_one_memory_block(monkeypatch):
     """v0.1.0 ran serially whenever all sources fitted into one memory block,
     which at the default 256 MiB covers most real problems, so --jobs had no
     effect. Sources are now split into at least n_jobs blocks."""
-    import netcenter.distances as distances
+    import net_center.distances as distances
 
     graph = path_graph(60)
     sources = np.arange(0, 60, 3)

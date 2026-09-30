@@ -11,18 +11,18 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from netcenter import _checks
-from netcenter.center import (
+from net_center import _checks
+from net_center.center import (
     DEFAULT_MAX_CELLS,
     CenterResult,
     absolute_center,
     vertex_center,
     weighted_median,
 )
-from netcenter.distances import DEFAULT_TEMP_MB, distance_matrix
+from net_center.distances import DEFAULT_TEMP_MB, distance_matrix
 
 if TYPE_CHECKING:
-    from netcenter.graph import Network
+    from net_center.graph import Network
 
 
 def _locate(net: Network, res: CenterResult) -> CenterResult:

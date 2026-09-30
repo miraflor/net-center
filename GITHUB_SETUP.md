@@ -13,10 +13,13 @@ inside it.
 6. Open a terminal in the repo folder and run:
 
 ```bash
+python -m pip uninstall -y netcenter
 python -m pip install -e ".[dev]"
 python -m pytest -q
-python -m netcenter.cli --help
+python -m net_center.cli --help
 ```
+
+The first command removes the package installed under the old name `netcenter`. If that package is not installed, pip only prints a warning.
 
 A clean tree should report **111 passed**.
 
@@ -25,19 +28,13 @@ A clean tree should report **111 passed**.
 Suggested commit message:
 
 ```text
-Fix node identity, ring closure, float32 median, and parallel Dijkstra
+Rename package to net-center and add provenance to README
 ```
 
 Suggested description:
 
 ```text
-Replaces grid-based node identity with a distance tolerance, so junctions are
-not split by floating-point noise and nearly closed rings are not deleted;
-splits lines that end on themselves; fixes a crash with NumPy 2.0.0; removes a
-hidden float64 copy and float32 summation error in the median; makes --jobs
-split shortest-path work across workers; reports GIS file errors as one-line
-CLI messages; adds a faster pruning bound; rebuilds the technical-note PDF from
-its source. See CHANGELOG.md, section Unreleased.
+Renames the distribution to net-center, the import package to net_center (directory netcenter/ became net_center/), and the command to net-center, to match the GitHub repository name. Adds a per-step provenance table and two references to the README. Rebuilds docs/TECHNICAL_NOTE.pdf from its source. See CHANGELOG.md, section Unreleased.
 ```
 
 ## New repository

@@ -97,7 +97,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from netcenter import _checks
+from net_center import _checks
 
 # How many array cells to process at once. Peak memory in the sweep is roughly
 # 15 arrays of this size in 8-byte floats, so 1,000,000 is about 120 MB per
@@ -114,7 +114,7 @@ class CenterResult:
 
     A vertex result has ``node`` set. A continuous-network result has ``edge``
     and ``t`` set, where ``t`` is distance from that edge's ``u`` endpoint.
-    ``xy`` is attached later by :mod:`netcenter.solve` because the mathematical
+    ``xy`` is attached later by :mod:`net_center.solve` because the mathematical
     core intentionally knows nothing about map coordinates.
     """
 

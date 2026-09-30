@@ -8,10 +8,10 @@ import time
 
 import numpy as np
 
-from netcenter import __version__
-from netcenter.center import DEFAULT_MAX_CELLS
-from netcenter.distances import DEFAULT_TEMP_MB, estimate_distance_matrix_mb
-from netcenter.solve import solve
+from net_center import __version__
+from net_center.center import DEFAULT_MAX_CELLS
+from net_center.distances import DEFAULT_TEMP_MB, estimate_distance_matrix_mb
+from net_center.solve import solve
 
 
 def _file_errors() -> tuple[type[BaseException], ...]:
@@ -41,14 +41,14 @@ def _file_errors() -> tuple[type[BaseException], ...]:
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="netcenter",
+        prog="net-center",
         description=(
             "Locate the weighted 1-median, vertex centre, and exact absolute "
             "1-centre of an undirected road network."
         ),
     )
     p.add_argument("roads", help="road line file (Shapefile, GeoPackage, etc.)")
-    p.add_argument("--version", action="version", version=f"netcenter {__version__}")
+    p.add_argument("--version", action="version", version=f"net-center {__version__}")
     p.add_argument("--layer", default=None, help="road layer name if needed")
     p.add_argument(
         "--crs",
@@ -171,7 +171,7 @@ def _load_demand(args, net, log):
             f"available fields: {fields}"
         )
 
-    from netcenter.graph import snap_points
+    from net_center.graph import snap_points
 
     xy = np.column_stack([pts.geometry.x.to_numpy(), pts.geometry.y.to_numpy()])
     idx, dist = snap_points(net, xy, max_dist=args.max_snap)
@@ -232,7 +232,7 @@ def main(argv=None) -> int:
     log = (lambda *a: None) if args.quiet else (lambda *a: print(*a, file=sys.stderr))
 
     try:
-        from netcenter.graph import build_network
+        from net_center.graph import build_network
 
         t0 = time.perf_counter()
         net = build_network(

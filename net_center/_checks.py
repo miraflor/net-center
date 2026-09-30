@@ -34,7 +34,7 @@ def non_negative_int(value, name: str) -> int:
 
 
 def backend(value, name: str = "backend") -> str:
-    """Return a joblib backend name after checking that netcenter supports it."""
+    """Return a joblib backend name after checking that net-center supports it."""
     if value not in BACKENDS:
         raise ValueError(f"{name} must be 'threading' or 'loky'")
     return value

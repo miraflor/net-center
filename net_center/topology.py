@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
-from netcenter import _checks
+from net_center import _checks
 
 
 def adjacency_from_edges(u, w, length, n_nodes: int) -> csr_matrix:

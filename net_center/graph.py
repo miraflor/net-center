@@ -1,4 +1,4 @@
-"""Convert line geometry into the compact undirected network used by netcenter.
+"""Convert line geometry into the compact undirected network used by net-center.
 
 A road layer is not automatically a routing graph. The important distinction is
 between *geometry* (lines that happen to cross on a map) and *topology* (places
@@ -44,7 +44,7 @@ from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-from netcenter.topology import adjacency_from_edges
+from net_center.topology import adjacency_from_edges
 
 _LINESTRING = 1
 
@@ -306,7 +306,7 @@ def _working_crs(gdf, target_crs=None):
             raise ValueError("target_crs must be projected, not latitude/longitude")
         if not _is_metre_crs(chosen):
             raise ValueError(
-                "target_crs must use metres because all netcenter distances and "
+                "target_crs must use metres because all net-center distances and "
                 "the snap distance are defined in metres"
             )
         return chosen
@@ -352,7 +352,7 @@ def _number_nodes(p0, p1, loc_u, loc_w, snap: float):
     leave isolated orphan nodes in the graph.
 
     Nodes are numbered by ``(round(x / snap), round(y / snap))`` and then by
-    exact ``(x, y)``. The first key reproduces the numbering of netcenter
+    exact ``(x, y)``. The first key reproduces the numbering of net-center
     v0.1.0, which sorted nodes by snap-grid cell, so node ids saved from
     earlier runs stay valid. It is computed in floating point and therefore
     cannot overflow. The numbering never depends on the order of the input

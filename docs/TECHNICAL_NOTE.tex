@@ -32,7 +32,7 @@
 
 \pagestyle{fancy}
 \fancyhf{}
-\lhead{\texttt{netcenter} v0.1.0}
+\lhead{\texttt{net-center} v0.1.0}
 \rhead{Algorithms and implementation}
 \cfoot{\thepage}
 \setlength{\headheight}{14pt}
@@ -47,11 +47,11 @@
 \newcommand{\clip}{\operatorname{clip}}
 
 \title{
-\textbf{Technical Discussion of \texttt{netcenter}}\\
+\textbf{Technical Discussion of \texttt{net-center}}\\
 \large Network Construction, Shortest Paths, the 1-Median, and the Absolute 1-Center
 }
 
-\author{Technical note for \texttt{netcenter} v0.1.0}
+\author{Technical note for \texttt{net-center} v0.1.0}
 \date{24 September 2026}
 
 \begin{document}
@@ -60,7 +60,7 @@
 
 \begin{abstract}
 
-\texttt{netcenter} is a Python package for solving classical facility-location
+\texttt{net-center} is a Python package for solving classical facility-location
 problems on undirected spatial networks.
 
 Given a road or other line-based network and an optional set of demand
@@ -176,7 +176,7 @@ principal mathematical reason for the package.
 
 \section{Algorithmic lineage}
 
-Every major mathematical component of \texttt{netcenter} is classical.
+Every major mathematical component of \texttt{net-center} is classical.
 
 The principal references are:
 
@@ -292,7 +292,7 @@ precision intersection handling and snap rounding have their own computational
 geometry literature, including Greene and Yao \cite{GreeneYao1986} and Hobby
 \cite{Hobby1999}.
 
-\texttt{netcenter} does not implement those algorithms directly. Planar noding
+\texttt{net-center} does not implement those algorithms directly. Planar noding
 is delegated to Shapely/GEOS \cite{ShapelyNode}. GEOS itself descends from the
 JTS Topology Suite.
 
@@ -1842,7 +1842,7 @@ The following are classical:
 
 \end{itemize}
 
-The following are implementation and engineering choices in \texttt{netcenter}:
+The following are implementation and engineering choices in \texttt{net-center}:
 
 \begin{itemize}[leftmargin=1.5em]
 
@@ -1876,7 +1876,7 @@ No novelty claim is made for the underlying network-location algorithms.
 
 \section{Conclusion}
 
-\texttt{netcenter} v0.1.0 is best understood as a practical geospatial
+\texttt{net-center} v0.1.0 is best understood as a practical geospatial
 implementation of classical network-location theory.
 
 Its mathematical core is compact:
