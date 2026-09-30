@@ -24,15 +24,15 @@ A coordinate centroid answers a geometric question. It does not necessarily answ
 
 Two locations may be close in straight-line distance but far apart through a road network because of rivers, coastlines, mountains, limited crossings, disconnected streets, or other topological constraints.
 
-`netcenter` instead solves location problems using the shortest-path metric \(d_G\) induced by the network.
+`netcenter` instead solves location problems using the shortest-path metric $`d_G`$ induced by the network.
 
 ### Weighted 1-median
 
-For demand locations \(i=1,\dots,k\), non-negative weights \(w_i\), and a candidate location \(x\),
+For demand locations $`i=1,\dots,k`$, non-negative weights $`w_i`$, and a candidate location $`x`$,
 
-\[
+```math
 x^* = \arg\min_x \sum_{i=1}^{k} w_i d_G(x,i).
-\]
+```
 
 This is the **minisum** objective: find the location minimizing aggregate weighted travel distance.
 
@@ -40,17 +40,17 @@ For vertex demand on a network, a median optimum can be chosen at a network vert
 
 ### Vertex 1-center
 
-\[
+```math
 x^* = \arg\min_{x\in V} \max_i d_G(x,i).
-\]
+```
 
 This is the **minimax** objective restricted to network vertices. It minimizes the distance to the farthest demand location.
 
 ### Absolute 1-center
 
-\[
+```math
 x^* = \arg\min_{x\in G} \max_i d_G(x,i).
-\]
+```
 
 Here the candidate location may lie **anywhere on the network**, including in the interior of an edge.
 
@@ -82,7 +82,7 @@ The mathematical core follows the literature beginning with:
 - **Hakimi, S. L. (1965).** “Optimum Distribution of Switching Centers in a Communication Network and Some Related Graph Theoretic Problems.” *Operations Research*, 13(3), 462–475.  
   https://doi.org/10.1287/opre.13.3.462
 
-  Extends the network-location framework to the \(p\)-median problem. `netcenter` currently solves only \(p=1\).
+  Extends the network-location framework to the $`p`$-median problem. `netcenter` currently solves only $`p=1`$.
 
 - **Daskin, M. S. (2013).** *Network and Discrete Location: Models, Algorithms, and Applications*, 2nd ed. Wiley.  
   https://doi.org/10.1002/9781118537015
@@ -277,20 +277,20 @@ For large or multi-zone study areas, supply a projection appropriate to the full
 
 Let:
 
-- \(k\) = number of unique demand nodes,
-- \(n\) = number of network nodes.
+- $`k`$ = number of unique demand nodes,
+- $`n`$ = number of network nodes.
 
 `netcenter` computes
 
-\[
+```math
 D_{ij}=d_G(q_i,v_j),
-\]
+```
 
 giving a demand-by-node matrix
 
-\[
+```math
 D\in\mathbb{R}^{k\times n}.
-\]
+```
 
 Distances are computed using Dijkstra's shortest-path algorithm through SciPy.
 
@@ -300,17 +300,17 @@ This matrix is then reused by the location solvers.
 
 ## Weighted 1-median implementation
 
-For each candidate node \(j\),
+For each candidate node $`j`$,
 
-\[
+```math
 M_j=\sum_i w_iD_{ij}.
-\]
+```
 
 The solution is
 
-\[
+```math
 j^*=\arg\min_j M_j.
-\]
+```
 
 In the implementation this is a weighted reduction over the shortest-path matrix followed by `argmin`.
 
@@ -320,17 +320,17 @@ When explicit weights are absent, every demand observation has unit weight.
 
 ## Vertex 1-center implementation
 
-For each candidate node \(j\),
+For each candidate node $`j`$,
 
-\[
+```math
 E_j=\max_iD_{ij}.
-\]
+```
 
 The vertex center is
 
-\[
+```math
 j^*=\arg\min_j E_j.
-\]
+```
 
 This is the node-restricted minimax solution.
 
@@ -338,42 +338,42 @@ This is the node-restricted minimax solution.
 
 ## Exact absolute 1-center
 
-Consider an edge \((u,w)\) of length \(L\), and let \(t\in[0,L]\) denote distance from endpoint \(u\).
+Consider an edge $`(u,w)`$ of length $`L`$, and let $`t\in[0,L]`$ denote distance from endpoint $`u`$.
 
-For demand node \(v\),
+For demand node $`v`$,
 
-\[
+```math
 d(t,v)
 =
 \min\left\{
 d(u,v)+t,\;
 d(w,v)+L-t
 \right\}.
-\]
+```
 
 Each demand therefore contributes a piecewise-linear "tent" function along the edge.
 
 The edge eccentricity is
 
-\[
+```math
 E(t)=\max_v d(t,v).
-\]
+```
 
 The route for a demand switches between the two edge endpoints at
 
-\[
+```math
 t_v^*
 =
 \frac{d(w,v)-d(u,v)+L}{2}.
-\]
+```
 
 Sorting these breakpoints partitions the edge into intervals in which the upper envelope reduces to
 
-\[
+```math
 E(t)=\max\{A+t,\;B+L-t\},
-\]
+```
 
-where \(A\) and \(B\) are fixed on the interval.
+where $`A`$ and $`B`$ are fixed on the interval.
 
 The minimum on each interval is therefore analytic. `netcenter` evaluates the necessary prefix/suffix maxima and selects the best candidate.
 
@@ -387,25 +387,25 @@ Sweeping every edge is unnecessary.
 
 The best vertex center first supplies an incumbent radius:
 
-\[
+```math
 R_V=\min_j\max_iD_{ij}.
-\]
+```
 
-Two lower bounds on the eccentricity anywhere on edge \((u,w)\) of length \(L\) are then used, cheapest first. The first needs only the vertex eccentricities \(E(v)=\max_iD_{iv}\), which are already known, and costs one operation per edge:
+Two lower bounds on the eccentricity anywhere on edge $`(u,w)`$ of length $`L`$ are then used, cheapest first. The first needs only the vertex eccentricities $`E(v)=\max_iD_{iv}`$, which are already known, and costs one operation per edge:
 
-\[
+```math
 LB'_e
 =
 \tfrac12\bigl(E(u)+E(w)-L\bigr).
-\]
+```
 
-It follows from the triangle inequality: a point at distance \(t\) from \(u\) has eccentricity at least \(E(u)-t\) and at least \(E(w)-(L-t)\), and the larger of the two is never below \(LB'_e\). The second bound costs \(k\) operations per edge and is evaluated only for edges that pass the first:
+It follows from the triangle inequality: a point at distance $`t`$ from $`u`$ has eccentricity at least $`E(u)-t`$ and at least $`E(w)-(L-t)`$, and the larger of the two is never below $`LB'_e`$. The second bound costs $`k`$ operations per edge and is evaluated only for edges that pass the first:
 
-\[
+```math
 LB_e
 =
 \max_i \min\{D_{iu},D_{iw}\}.
-\]
+```
 
 If either bound cannot improve the incumbent, the edge is discarded before the more expensive breakpoint sweep.
 
@@ -415,7 +415,7 @@ This is an implementation acceleration; it does not change the optimization obje
 
 ## Performance and memory
 
-For \(k\) unique demand nodes and \(n\) network nodes, the stored shortest-path matrix requires approximately:
+For $`k`$ unique demand nodes and $`n`$ network nodes, the stored shortest-path matrix requires approximately:
 
 ```text
 float64: 8 × k × n bytes
@@ -551,7 +551,7 @@ Not implemented:
 - congestion-dependent travel time;
 - weighted minimax centers;
 - demand located continuously along edges;
-- \(p>1\) center or median problems;
+- $`p>1`$ center or median problems;
 - automatic inference of bridge/tunnel connectivity from attributes;
 - out-of-core storage for distance matrices too large for RAM.
 
@@ -563,28 +563,28 @@ The weighted network median is **not** an arithmetic centroid.
 
 A weighted Euclidean centroid minimizes squared Euclidean distance and can be written
 
-\[
+```math
 \bar{x}
 =
 \frac{\sum_i w_ix_i}{\sum_iw_i}.
-\]
+```
 
 The network median instead minimizes
 
-\[
+```math
 \sum_i w_id_G(x,i).
-\]
+```
 
 It is therefore better interpreted as a **network-accessibility center under a minisum objective** than as a literal coordinate centroid.
 
 A closer network analogue to a Euclidean centroid would be a network Fréchet mean or barycenter,
 
-\[
+```math
 x^*
 =
 \arg\min_{x\in G}
 \sum_iw_i d_G(x,i)^2,
-\]
+```
 
 which is **not currently implemented**.
 
