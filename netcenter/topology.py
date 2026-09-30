@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
 
+from netcenter import _checks
+
 
 def adjacency_from_edges(u, w, length, n_nodes: int) -> csr_matrix:
     """Build an undirected sparse adjacency matrix from road segments.
@@ -28,22 +30,9 @@ def adjacency_from_edges(u, w, length, n_nodes: int) -> csr_matrix:
     n_nodes
         Total number of nodes in the network.
     """
-    if (
-        isinstance(n_nodes, (bool, np.bool_))
-        or not isinstance(n_nodes, (int, np.integer))
-        or n_nodes < 0
-    ):
-        raise ValueError("n_nodes must be a non-negative integer")
-    n_nodes = int(n_nodes)
-
-    u_raw = np.asarray(u)
-    w_raw = np.asarray(w)
-    if not np.issubdtype(u_raw.dtype, np.integer) or not np.issubdtype(
-        w_raw.dtype, np.integer
-    ):
-        raise ValueError("u and w must contain integer node indices")
-    u = u_raw.astype(np.int64, copy=False).reshape(-1)
-    w = w_raw.astype(np.int64, copy=False).reshape(-1)
+    n_nodes = _checks.non_negative_int(n_nodes, "n_nodes")
+    u = _checks.index_array(u, "u and w")
+    w = _checks.index_array(w, "u and w")
     length = np.asarray(length, dtype=np.float64).reshape(-1)
 
     if not (len(u) == len(w) == len(length)):

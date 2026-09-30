@@ -20,6 +20,8 @@ import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import dijkstra
 
+from netcenter import _checks
+
 MIN_PARALLEL_WORK = 20_000_000
 DEFAULT_TEMP_MB = 256
 
@@ -43,9 +45,8 @@ def _validate_graph(graph: csr_matrix) -> csr_matrix:
         if (graph.data < 0).any():
             raise ValueError("Dijkstra requires non-negative edge lengths")
 
-    # ``directed=False`` is only a correct model for this package when the cost
-    # matrix itself is symmetric.  Fail here rather than asking SciPy to infer
-    # undirected meaning from direction-dependent entries.
+    # netcenter models an undirected network, which is only meaningful when the
+    # cost matrix itself is symmetric.  Fail here rather than guess.
     delta = graph - graph.T
     if delta.nnz and not np.allclose(delta.data, 0.0, rtol=1e-12, atol=1e-12):
         raise ValueError(
@@ -54,32 +55,36 @@ def _validate_graph(graph: csr_matrix) -> csr_matrix:
     return graph
 
 
-def _validate_jobs(n_jobs: int) -> int:
-    """Require a genuine positive integer worker count."""
-    if (
-        isinstance(n_jobs, (bool, np.bool_))
-        or not isinstance(n_jobs, (int, np.integer))
-        or n_jobs < 1
-    ):
-        raise ValueError("n_jobs must be a positive integer")
-    return int(n_jobs)
-
-
 def _chunk(graph: csr_matrix, sources: np.ndarray, dtype) -> np.ndarray:
     """Compute one bounded block of source-to-node distances."""
-    # SciPy currently computes this result in float64.  Casting immediately
-    # after each bounded block prevents float32 users from holding one complete
-    # float64 matrix alongside the complete float32 matrix.
-    block = dijkstra(graph, directed=False, indices=sources)
+    # The graph has been checked to be symmetric, so every road is already
+    # stored in both directions and ``directed=True`` gives the same distances
+    # as ``directed=False``.  It is faster because SciPy's undirected mode
+    # builds a transposed copy of the graph on every call and then relaxes each
+    # edge twice (once from each stored direction).
+    block = dijkstra(graph, directed=True, indices=sources)
+    # SciPy computes in float64.  Casting each bounded block immediately
+    # prevents float32 users from holding one complete float64 matrix
+    # alongside the complete float32 matrix.
     return block.astype(dtype, copy=False)
 
 
-def _source_chunks(sources: np.ndarray, n_nodes: int, max_temp_mb: float):
-    """Yield source-index blocks whose float64 Dijkstra output stays bounded."""
+def _source_chunks(
+    sources: np.ndarray, n_nodes: int, max_temp_mb: float, min_chunks: int = 1
+):
+    """Split sources into row blocks for Dijkstra.
+
+    Each block's float64 output stays within ``max_temp_mb``.  When
+    ``min_chunks > 1`` (parallel execution), sources are also split into at
+    least that many blocks, so every worker receives work even when the whole
+    problem would fit in one memory block.
+    """
     if not np.isfinite(max_temp_mb) or max_temp_mb <= 0:
         raise ValueError("max_temp_mb must be a finite positive number")
     bytes_per_row = max(1, n_nodes) * np.dtype(np.float64).itemsize
-    rows = max(1, int(max_temp_mb * 1024**2 // bytes_per_row))
+    rows_for_memory = max(1, int(max_temp_mb * 1024**2 // bytes_per_row))
+    rows_for_workers = -(-len(sources) // max(1, min_chunks))  # ceiling division
+    rows = max(1, min(rows_for_memory, rows_for_workers))
     for start in range(0, len(sources), rows):
         yield sources[start : start + rows]
 
@@ -98,7 +103,7 @@ def distance_matrix(
     Parameters
     ----------
     graph
-        Square sparse adjacency matrix with non-negative edge lengths.
+        Square symmetric sparse adjacency matrix with non-negative edge lengths.
     sources
         Node indices from which shortest paths should be calculated.
     n_jobs
@@ -123,16 +128,14 @@ def distance_matrix(
 
     Notes
     -----
-    Parallel results are consumed as an ordered generator and written directly
-    into the preallocated result matrix.  This avoids the old peak-memory pattern
-    of retaining every returned block and then making a second full copy with
+    When parallel execution is used, sources are split into at least
+    ``n_jobs`` blocks.  Parallel results are consumed as an ordered generator
+    and written directly into the preallocated result matrix, which avoids
+    retaining every returned block and then making a second full copy with
     ``numpy.vstack``.
     """
     graph = _validate_graph(graph)
-    source_raw = np.atleast_1d(np.asarray(sources)).reshape(-1)
-    if not np.issubdtype(source_raw.dtype, np.integer):
-        raise ValueError("starting points must be integer node indices")
-    sources = source_raw.astype(np.int64, copy=False)
+    sources = _checks.index_array(np.atleast_1d(sources), "sources")
     if sources.size == 0:
         raise ValueError("no starting points given")
     if graph.shape[0] == 0:
@@ -143,32 +146,29 @@ def distance_matrix(
     dtype = np.dtype(dtype)
     if dtype.kind != "f":
         raise ValueError("distance-matrix dtype must be a floating-point type")
-    if not isinstance(min_parallel_work, (int, np.integer)) or min_parallel_work < 0:
-        raise ValueError("min_parallel_work must be a non-negative integer")
+    min_parallel_work = _checks.non_negative_int(min_parallel_work, "min_parallel_work")
+    n_jobs = _checks.positive_int(n_jobs, "n_jobs")
+    backend = _checks.backend(backend)
 
-    n_jobs = _validate_jobs(n_jobs)
-    if backend not in {"threading", "loky"}:
-        raise ValueError("backend must be 'threading' or 'loky'")
-
-    chunks = list(_source_chunks(sources, graph.shape[0], max_temp_mb))
-    work = int(sources.size) * int(graph.shape[0])
-    out = np.empty((sources.size, graph.shape[0]), dtype=dtype)
-
-    if n_jobs == 1 or len(chunks) == 1 or work < min_parallel_work:
-        row = 0
-        for chunk in chunks:
-            block = _chunk(graph, chunk, dtype)
-            out[row : row + len(chunk)] = block
-            row += len(chunk)
-        return out
-
-    from joblib import Parallel, delayed
-
-    # ``return_as='generator'`` preserves submission order.  We can therefore
-    # stream each completed block straight into its predetermined output rows.
-    blocks = Parallel(n_jobs=n_jobs, backend=backend, return_as="generator")(
-        delayed(_chunk)(graph, chunk, dtype) for chunk in chunks
+    n_nodes = graph.shape[0]
+    work = int(sources.size) * int(n_nodes)
+    parallel = n_jobs > 1 and sources.size > 1 and work >= min_parallel_work
+    chunks = list(
+        _source_chunks(sources, n_nodes, max_temp_mb, min_chunks=n_jobs if parallel else 1)
     )
+    out = np.empty((sources.size, n_nodes), dtype=dtype)
+
+    if not parallel:
+        blocks = (_chunk(graph, chunk, dtype) for chunk in chunks)
+    else:
+        from joblib import Parallel, delayed
+
+        # ``return_as='generator'`` preserves submission order, so each
+        # completed block can be streamed straight into its output rows.
+        blocks = Parallel(n_jobs=n_jobs, backend=backend, return_as="generator")(
+            delayed(_chunk)(graph, chunk, dtype) for chunk in chunks
+        )
+
     row = 0
     for chunk, block in zip(chunks, blocks, strict=True):
         out[row : row + len(chunk)] = block

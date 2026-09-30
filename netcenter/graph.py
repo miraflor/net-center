@@ -18,9 +18,19 @@ that every drawn crossing is a valid junction. That can be useful for simple
 street drawings, but it is wrong for overpasses and underpasses. The option is
 explicit because silently inventing a turn is worse than failing loudly.
 
+One location rule
+-----------------
+Every decision about "the same place" uses one rule: two coordinates within
+``snap`` metres of each other are one network location, and the rule is
+applied transitively (see :func:`_close_point_labels`). The same rule decides
+node identity, which source vertices are shared junctions, and whether a line
+is a ring (both ends at one location). Using one rule everywhere matters: when
+these decisions used different rules, a junction could be split in two and a
+ring could be deleted as a self-loop.
+
 Other protections in this module handle empty geometries, closed rings,
-near-identical endpoints, duplicate parallel edges, metric CRS units, and
-stranded connected components.
+self-touching lines, duplicate parallel edges, metric CRS units, and stranded
+connected components.
 """
 
 from __future__ import annotations
@@ -30,7 +40,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import shapely
-from scipy.sparse import csr_matrix
+from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
@@ -90,139 +100,185 @@ def _node_and_merge(geoms: np.ndarray) -> np.ndarray:
     return _explode_lines(np.asarray([merged], dtype=object))
 
 
-def _split_at_shared_vertices(parts: np.ndarray, snap: float) -> np.ndarray:
-    """Split lines at vertices that are shared by *different* input lines.
+def _run_bounds(line_id: np.ndarray, n_lines: int) -> tuple[np.ndarray, np.ndarray]:
+    """Index of the first and last coordinate of each line in a flat array.
 
-    This is the topology-preserving default for OSM-shaped linework.  A real
-    junction is often encoded as one coordinate that belongs to two or more
-    ways, but that coordinate need not be an endpoint of either way.  Splitting
-    only where a side street ends on a through-road therefore recovers many
-    T-junctions but still misses X-junctions where both ways continue.
-
-    We instead identify coordinate locations used by at least two distinct
-    LineStrings and split every participating line at that location when it is
-    an interior vertex.  Crucially, this does *not* invent a coordinate at a
-    mere geometric crossing.  A bridge crossing a road below shares no source
-    vertex, so the two lines remain disconnected unless the caller explicitly
-    asks for full planar noding with ``node=True``.
-
-    Coordinates are compared on the same ``snap`` grid later used for endpoint
-    identity.  This keeps the meaning of "same network location" consistent
-    throughout graph construction.
+    ``line_id`` is the per-coordinate line index returned by
+    ``shapely.get_coordinates(..., return_index=True)``; every line must have
+    at least one coordinate (empty geometry is removed before this point).
     """
-    if len(parts) < 2:
-        return parts
-
-    xy, line_id = shapely.get_coordinates(parts, return_index=True)
-    if len(xy) == 0:
-        return parts
-
-    starts = np.searchsorted(line_id, np.arange(len(parts)), side="left")
-    ends = np.searchsorted(line_id, np.arange(len(parts)), side="right") - 1
-
-    # Quantise all source vertices once.  Locations shared by two distinct
-    # lines are genuine topology supplied by the data; unlike planar noding, no
-    # new intersection coordinate is created here.
-    grid = _quantise_xy(xy, snap)
-    _, location_id = np.unique(grid, axis=0, return_inverse=True)
-    location_id = location_id.astype(np.int64, copy=False)
-
-    # A location is shared when the minimum and maximum contributing line IDs
-    # differ.  Sorting one integer vector is materially lighter than building a
-    # second (location, line) matrix and running another 2-D unique operation.
-    # Repeated visits by the *same* line therefore do not create a false junction.
-    order = np.argsort(location_id, kind="stable")
-    loc_sorted = location_id[order]
-    line_sorted = line_id[order]
-    first = np.r_[True, loc_sorted[1:] != loc_sorted[:-1]]
-    starts_of_groups = np.flatnonzero(first)
-    min_line = np.minimum.reduceat(line_sorted, starts_of_groups)
-    max_line = np.maximum.reduceat(line_sorted, starts_of_groups)
-    shared_ids = loc_sorted[starts_of_groups][min_line != max_line]
-    shared_location = np.zeros(int(location_id.max()) + 1, dtype=bool)
-    shared_location[shared_ids] = True
-
-    interior = np.ones(len(xy), dtype=bool)
-    interior[starts] = False
-    interior[ends] = False
-    cut_here = interior & shared_location[location_id]
-    if not cut_here.any():
-        return parts
-
-    needs_cut = np.zeros(len(parts), dtype=bool)
-    np.logical_or.at(needs_cut, line_id[cut_here], True)
-
-    out: list[object] = []
-    for p in range(len(parts)):
-        if not needs_cut[p]:
-            out.append(parts[p])
-            continue
-
-        lo, hi = starts[p], ends[p] + 1
-        coords = xy[lo:hi]
-        local_cuts = np.flatnonzero(cut_here[lo:hi])
-        positions = [0, *local_cuts.tolist(), len(coords) - 1]
-
-        # Consecutive repeated cut positions are harmless but produce zero-size
-        # pieces.  Deduplicate positions before rebuilding the line.
-        positions = np.unique(np.asarray(positions, dtype=np.int64))
-        for a, b in zip(positions[:-1], positions[1:], strict=True):
-            piece = coords[a : b + 1]
-            if len(piece) >= 2:
-                out.append(shapely.linestrings(piece))
-
-    return np.asarray(out, dtype=object)
+    lines = np.arange(n_lines)
+    starts = np.searchsorted(line_id, lines, side="left")
+    ends = np.searchsorted(line_id, lines, side="right") - 1
+    return starts, ends
 
 
-def _quantise_xy(xy: np.ndarray, snap: float) -> np.ndarray:
-    """Map coordinates to an integer snap grid with an overflow guard."""
-    xy = np.asarray(xy, dtype=np.float64)
-    scaled = xy / float(snap)
-    if not np.isfinite(scaled).all():
-        raise ValueError("coordinates are too large relative to the snap grid spacing")
-
-    limit = np.iinfo(np.int64).max - 1
-    if np.abs(scaled).max(initial=0.0) > limit:
-        raise ValueError(
-            "snap is too small for the coordinate magnitude; choose a larger "
-            "snap grid spacing"
-        )
-    return np.rint(scaled).astype(np.int64)
+def _check_finite(xy: np.ndarray) -> None:
+    """Reject NaN or infinite coordinates before any distance is measured."""
+    if not np.isfinite(xy).all():
+        raise ValueError("line geometry contains NaN or infinite coordinates")
 
 
-def _split_closed_rings(parts: np.ndarray, tolerance: float) -> np.ndarray:
-    """Cut closed/nearly-closed lines before endpoint snapping deletes them.
+def _close_point_labels(xy: np.ndarray, tol: float, may_link=None) -> np.ndarray:
+    """Label points so that points within ``tol`` metres share a label.
 
-    Real GIS rings are not always *bit-for-bit* closed: the final coordinate can
-    differ from the first by floating-point dust. We therefore use the same
-    endpoint tolerance that will later define node identity.
+    Two points receive the same label when a chain of points connects them in
+    which each step is at most ``tol`` long (single-linkage clustering). Unlike
+    rounding coordinates to a grid, this never separates two nearly identical
+    points because a grid-cell boundary happens to lie between them.
+
+    ``may_link(i, j)`` can refuse candidate pairs. It receives two index arrays
+    and returns a boolean array.
+    """
+    n = len(xy)
+    if n == 0:
+        return np.zeros(0, dtype=np.int64)
+    pairs = cKDTree(xy).query_pairs(r=tol, output_type="ndarray").reshape(-1, 2)
+    if may_link is not None and len(pairs):
+        pairs = pairs[may_link(pairs[:, 0], pairs[:, 1])]
+    links = coo_matrix(
+        (np.ones(len(pairs), dtype=np.int8), (pairs[:, 0], pairs[:, 1])), shape=(n, n)
+    )
+    _, labels = connected_components(links, directed=False)
+    return labels.astype(np.int64, copy=False)
+
+
+def _split_at_shared_vertices(parts: np.ndarray, snap: float) -> np.ndarray:
+    """Split lines at junctions that the source vertices already encode.
+
+    This is the topology-preserving default for OSM-shaped linework. A real
+    junction is often one coordinate that belongs to two or more ways without
+    being an endpoint of either, so splitting only at line ends would miss it.
+
+    A vertex location is a junction when
+
+    * vertices of two or more *different* lines lie there (T- and X-junctions),
+      or
+    * a line endpoint lies there. This includes a line's own endpoint: a
+      "lollipop" way that ends on one of its own interior vertices (common for
+      cul-de-sac turning loops) is split where it touches itself.
+
+    Every line is split at each of its interior vertices that lies at a
+    junction. Crucially, no coordinate is invented at a mere geometric
+    crossing: a bridge that shares no source vertex with the road beneath it
+    stays disconnected unless the caller asks for planar noding (``node=True``).
+
+    "Same location" means within ``snap`` metres (:func:`_close_point_labels`).
+    Two vertices of one and the same line are linked only when one of them is
+    an endpoint and the line travels more than ``snap`` between them. So a
+    densely digitised road is not merged into a single location, and a line
+    that crosses itself at an interior vertex is not a junction.
     """
     if len(parts) == 0:
         return parts
-    p0, p1 = _endpoints(parts)
-    nearly_closed = np.linalg.norm(p0 - p1, axis=1) <= tolerance
-    is_ring = np.asarray(shapely.is_closed(parts)) | nearly_closed
-    if not is_ring.any():
+
+    xy, line_id = shapely.get_coordinates(parts, return_index=True)
+    _check_finite(xy)
+    starts, ends = _run_bounds(line_id, len(parts))
+    is_end = np.zeros(len(xy), dtype=bool)
+    is_end[starts] = True
+    is_end[ends] = True
+
+    # Distance of every vertex along its own line, in metres from the start.
+    step = np.r_[0.0, np.hypot(*np.diff(xy, axis=0).T)]
+    step[starts] = 0.0  # no step across the boundary between two lines
+    along = np.cumsum(step)
+    along -= along[starts][line_id]
+
+    def may_link(i, j):
+        # Vertices of different lines within snap are one location. Within one
+        # line, a vertex is linked to the line's own endpoint only when the
+        # line travels more than snap between them -- it left the endpoint and
+        # came back, as in a lollipop loop. Without this condition the closely
+        # spaced vertices next to the end of a densely digitised road would be
+        # merged into its endpoint, shortening the road.
+        other_line = line_id[i] != line_id[j]
+        returns = (is_end[i] | is_end[j]) & (np.abs(along[i] - along[j]) > snap)
+        return other_line | returns
+
+    location = _close_point_labels(xy, snap, may_link)
+
+    # Labels are 0..n_locations-1, so after sorting by label the g-th group is
+    # label g. A location is shared when the smallest and largest line id in
+    # its group differ.
+    order = np.argsort(location, kind="stable")
+    group_start = np.flatnonzero(np.r_[True, np.diff(location[order]) != 0])
+    min_line = np.minimum.reduceat(line_id[order], group_start)
+    max_line = np.maximum.reduceat(line_id[order], group_start)
+    junction = min_line != max_line
+    junction[location[is_end]] = True
+
+    cut_here = ~is_end & junction[location]
+    if not cut_here.any():
         return parts
+    return _cut_lines(parts, xy, line_id, cut_here)
 
-    from shapely.ops import substring
 
-    out = list(parts[~is_ring])
-    for geom in parts[is_ring]:
-        total = float(geom.length)
-        if total <= 0:
-            continue
-        out.append(substring(geom, 0.0, total / 2.0))
-        out.append(substring(geom, total / 2.0, total))
-    return np.asarray(out, dtype=object)
+def _cut_lines(parts, xy, line_id, cut_here) -> np.ndarray:
+    """Split lines at the flagged interior vertices, keeping input order.
+
+    Lines without a cut keep their original geometry object. The pieces of all
+    cut lines are built in one vectorised Shapely call: each cut vertex is
+    written twice, once as the end of one piece and once as the start of the
+    next.
+    """
+    cuts_per_line = np.bincount(line_id[cut_here], minlength=len(parts))
+    pieces_per_line = cuts_per_line + 1
+    is_cut_line = cuts_per_line > 0
+
+    vertex = np.flatnonzero(is_cut_line[line_id])
+    vertex = np.repeat(vertex, np.where(cut_here[vertex], 2, 1))
+    # A new piece begins at the first vertex of each line and at the second
+    # copy of each cut vertex.
+    first_of_line = np.r_[True, line_id[vertex[1:]] != line_id[vertex[:-1]]]
+    second_copy = np.r_[False, vertex[1:] == vertex[:-1]]
+    piece = np.cumsum(first_of_line | second_copy) - 1
+    new_pieces = shapely.linestrings(xy[vertex], indices=piece)
+
+    # Put each line's pieces in the slots its original geometry occupied, so
+    # the order of edges still follows the order of the input features.
+    out = np.empty(int(pieces_per_line.sum()), dtype=object)
+    first_slot = np.cumsum(pieces_per_line) - pieces_per_line
+    uncut_slots = first_slot[~is_cut_line]
+    out[uncut_slots] = parts[~is_cut_line]
+    free = np.ones(len(out), dtype=bool)
+    free[uncut_slots] = False
+    out[free] = new_pieces
+    return out
 
 
 def _endpoints(parts: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Vectorised extraction of the first and last coordinate of each line."""
-    xy, idx = shapely.get_coordinates(parts, return_index=True)
-    starts = np.searchsorted(idx, np.arange(len(parts)), side="left")
-    ends = np.searchsorted(idx, np.arange(len(parts)), side="right") - 1
+    xy, line_id = shapely.get_coordinates(parts, return_index=True)
+    _check_finite(xy)
+    starts, ends = _run_bounds(line_id, len(parts))
     return xy[starts], xy[ends]
+
+
+def _endpoint_locations(parts: np.ndarray, snap: float):
+    """Endpoints, lengths, and the location label of both ends of every line."""
+    p0, p1 = _endpoints(parts)
+    lengths = np.asarray(shapely.length(parts), dtype=np.float64)
+    location = _close_point_labels(np.vstack([p0, p1]), snap)
+    m = len(parts)
+    return p0, p1, lengths, location[:m], location[m:]
+
+
+def _split_rings(parts: np.ndarray, is_ring: np.ndarray) -> np.ndarray:
+    """Replace each ring by its two halves, appended after the other lines.
+
+    A ring here is any line whose two ends are one network location, whether
+    it is exactly closed or only nearly closed. Left whole it would become a
+    self-loop and be discarded, deleting real road.
+    """
+    from shapely.ops import substring
+
+    halves = []
+    for geom in parts[is_ring]:
+        half = geom.length / 2.0
+        halves.append(substring(geom, 0.0, half))
+        halves.append(substring(geom, half, geom.length))
+    return np.concatenate([parts[~is_ring], np.asarray(halves, dtype=object)])
 
 
 def _is_metre_crs(crs) -> bool:
@@ -251,7 +307,7 @@ def _working_crs(gdf, target_crs=None):
         if not _is_metre_crs(chosen):
             raise ValueError(
                 "target_crs must use metres because all netcenter distances and "
-                "snap grid spacing is defined in metres"
+                "the snap distance are defined in metres"
             )
         return chosen
 
@@ -288,23 +344,30 @@ def _working_crs(gdf, target_crs=None):
     return CRS.from_user_input(chosen)
 
 
-def _compact_nodes(
-    node_xy: np.ndarray, u: np.ndarray, w: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Drop nodes no surviving edge uses and remap endpoints densely.
+def _number_nodes(p0, p1, loc_u, loc_w, snap: float):
+    """Give the locations used by the surviving edges dense ids ``0..n-1``.
 
-    Geometry filtering can remove a sliver or snapped self-loop after node IDs
-    have already been assigned.  Leaving those now-orphaned nodes in the CSR
-    creates isolated components that can later make an otherwise connected
-    network appear unreachable.
+    Each node is placed at the first endpoint coordinate that maps to it.
+    Locations used only by discarded edges receive no id, so filtering cannot
+    leave isolated orphan nodes in the graph.
+
+    Nodes are numbered by ``(round(x / snap), round(y / snap))`` and then by
+    exact ``(x, y)``. The first key reproduces the numbering of netcenter
+    v0.1.0, which sorted nodes by snap-grid cell, so node ids saved from
+    earlier runs stay valid. It is computed in floating point and therefore
+    cannot overflow. The numbering never depends on the order of the input
+    features.
     """
-    used = np.unique(np.concatenate([u, w]))
-    if len(used) == len(node_xy):
-        return node_xy, u, w
-
-    remap = np.full(len(node_xy), -1, dtype=np.int64)
-    remap[used] = np.arange(len(used), dtype=np.int64)
-    return node_xy[used], remap[u], remap[w]
+    location = np.concatenate([loc_u, loc_w])
+    used, first = np.unique(location, return_index=True)
+    xy = np.vstack([p0, p1])[first]
+    cell = np.rint(xy / snap)
+    rank = np.lexsort((xy[:, 1], xy[:, 0], cell[:, 1], cell[:, 0]))
+    node_id = np.empty(len(used), dtype=np.int64)
+    node_id[rank] = np.arange(len(used), dtype=np.int64)
+    ids = node_id[np.searchsorted(used, location)]
+    m = len(loc_u)
+    return xy[rank], ids[:m], ids[m:]
 
 
 def _largest_component_by_length(labels, u, w, lengths) -> int:
@@ -338,10 +401,12 @@ def build_network(
         Optional projected CRS whose horizontal units are metres. Geographic
         input is otherwise moved to an inferred local UTM CRS automatically.
     snap
-        Node-identity grid spacing in metres. Endpoints and shared source
-        vertices are quantised to this grid; arbitrary points are never
-        projected onto roads. Closed-ring detection also uses this value as a
-        small Euclidean closure threshold.
+        Node-identity tolerance in metres. Coordinates closer than this are
+        one network location, and the rule is applied transitively. It governs
+        line endpoints and the shared source vertices used for junction
+        recovery; arbitrary points are never projected onto roads. A line
+        whose two ends are one location (a closed or nearly closed ring) is
+        split into two halves so that it is not deleted as a self-loop.
     node
         If true, split every geometric line crossing. Use only for a planar
         network where every 2-D crossing is a genuine junction. This also
@@ -398,35 +463,24 @@ def build_network(
         if split_shared_vertices:
             parts = _split_at_shared_vertices(parts, snap)
 
-    parts = _split_closed_rings(parts, tolerance=snap)
     if len(parts) == 0:
         raise ValueError("no line segments survived preprocessing")
 
-    p0, p1 = _endpoints(parts)
-    lengths = np.asarray(shapely.length(parts), dtype=np.float64)
+    # Locations of both ends of every line. A line whose ends are one location
+    # is a ring: split it in two so it survives the self-loop filter below.
+    p0, p1, lengths, loc_u, loc_w = _endpoint_locations(parts, snap)
+    is_ring = (loc_u == loc_w) & (lengths > min_length)
+    if is_ring.any():
+        parts = _split_rings(parts, is_ring)
+        p0, p1, lengths, loc_u, loc_w = _endpoint_locations(parts, snap)
 
-    # Quantise endpoints to integer bins. This avoids unreliable direct equality
-    # tests on floating-point map coordinates while keeping the original drawn
-    # coordinate as the representative node location.
-    stacked = np.vstack([p0, p1])
-    quantised = _quantise_xy(stacked, snap)
-    _, first_seen, inverse = np.unique(
-        quantised, axis=0, return_index=True, return_inverse=True
-    )
-    inverse = inverse.ravel()
-    node_xy = stacked[first_seen]
-
-    m = len(parts)
-    u, w = inverse[:m], inverse[m:]
-    usable = (u != w) & np.isfinite(lengths) & (lengths > min_length)
-    u, w = u[usable], w[usable]
-    lengths, parts = lengths[usable], parts[usable]
-    if len(u) == 0:
+    usable = (loc_u != loc_w) & np.isfinite(lengths) & (lengths > min_length)
+    if not usable.any():
         raise ValueError("no usable segments after removing loops and slivers")
-
-    # Node IDs were created before sliver/self-loop filtering.  Compact them now
-    # so filtered geometry cannot leave isolated orphan nodes in the graph.
-    node_xy, u, w = _compact_nodes(node_xy, u, w)
+    parts, lengths = parts[usable], lengths[usable]
+    node_xy, u, w = _number_nodes(
+        p0[usable], p1[usable], loc_u[usable], loc_w[usable], snap
+    )
     csr = adjacency_from_edges(u, w, lengths, len(node_xy))
 
     if keep_largest_component:

@@ -82,3 +82,42 @@ def test_fractional_source_indices_are_rejected_instead_of_truncated():
     graph = path_graph(4)
     with pytest.raises(ValueError, match="integer node indices"):
         distance_matrix(graph, [0.5])
+
+
+# ---------------------------------------------------------------------------
+# Regressions added in the September 2026 review.
+# ---------------------------------------------------------------------------
+
+
+def test_parallel_request_splits_work_that_fits_one_memory_block(monkeypatch):
+    """v0.1.0 ran serially whenever all sources fitted into one memory block,
+    which at the default 256 MiB covers most real problems, so --jobs had no
+    effect. Sources are now split into at least n_jobs blocks."""
+    import netcenter.distances as distances
+
+    graph = path_graph(60)
+    sources = np.arange(0, 60, 3)
+    serial = distance_matrix(graph, sources, n_jobs=1)
+    calls = []
+    original = distances._chunk
+    monkeypatch.setattr(distances, "_chunk", lambda *a: calls.append(1) or original(*a))
+    parallel = distance_matrix(
+        graph, sources, n_jobs=3, backend="threading", min_parallel_work=0
+    )
+    assert len(calls) == 3
+    assert np.array_equal(parallel, serial)
+
+
+def test_directed_dijkstra_equals_undirected_scipy_on_random_graphs():
+    from scipy.sparse.csgraph import dijkstra
+
+    rng = np.random.default_rng(4)
+    for _ in range(5):
+        n = 80
+        u = rng.integers(0, n, 200)
+        w = rng.integers(0, n, 200)
+        keep = u != w
+        graph = adjacency_from_edges(u[keep], w[keep], rng.uniform(1, 50, keep.sum()), n)
+        sources = rng.choice(n, 10, replace=False)
+        expected = dijkstra(graph, directed=False, indices=sources)
+        assert np.array_equal(distance_matrix(graph, sources), expected)

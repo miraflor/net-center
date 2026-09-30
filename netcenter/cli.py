@@ -9,8 +9,34 @@ import time
 import numpy as np
 
 from netcenter import __version__
+from netcenter.center import DEFAULT_MAX_CELLS
 from netcenter.distances import DEFAULT_TEMP_MB, estimate_distance_matrix_mb
-from netcenter.solve import DEFAULT_MAX_CELLS, solve
+from netcenter.solve import solve
+
+
+def _file_errors() -> tuple[type[BaseException], ...]:
+    """Exception classes that GIS readers and writers raise for bad files.
+
+    GeoPandas 1.x reads and writes through pyogrio, whose errors derive from
+    ``RuntimeError`` rather than ``OSError``. Without them, a mistyped path
+    produced a full traceback instead of a one-line error message. Only these
+    specific classes are caught, so genuine programming errors still show a
+    traceback.
+    """
+    errors: list[type[BaseException]] = [OSError]
+    try:
+        from pyogrio.errors import DataLayerError, DataSourceError
+
+        errors += [DataSourceError, DataLayerError]
+    except ImportError:
+        pass
+    try:
+        from fiona.errors import FionaError
+
+        errors.append(FionaError)
+    except ImportError:
+        pass
+    return tuple(errors)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -34,7 +60,10 @@ def _parser() -> argparse.ArgumentParser:
         "--snap",
         type=float,
         default=0.1,
-        help="node-identity grid spacing in metres (default: 0.1)",
+        help=(
+            "node-identity tolerance in metres: coordinates closer than this are "
+            "one network location (default: 0.1)"
+        ),
     )
     p.add_argument(
         "--node-crossings",
@@ -42,8 +71,8 @@ def _parser() -> argparse.ArgumentParser:
         help="PLANAR networks only: turn every geometric crossing into a junction; "
         "do not use on bridges/underpasses",
     )
-    # Compatibility with 0.1 commands. Since 0.2 already defaults to no planar
-    # noding, this flag is a harmless no-op rather than an abrupt CLI break.
+    # Accepted for compatibility with pre-release commands. Planar noding is
+    # already off by default, so this hidden flag has no effect.
     p.add_argument("--no-node", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--no-shared-vertex-noding",
@@ -242,21 +271,27 @@ def main(argv=None) -> int:
             include_absolute=not args.skip_absolute,
         )
         log(f"solved in {time.perf_counter() - t1:.1f}s")
-    except (ImportError, ValueError, OSError) as exc:
+
+        n_demand = len(demand_nodes) if demand_nodes is not None else net.n_nodes
+        total_weight = float(np.sum(weights)) if weights is not None else float(n_demand)
+        for name, r in results.items():
+            where = (
+                f"node {r.node}" if r.node is not None else f"edge {r.edge} @ {r.t:.1f} m"
+            )
+            extra = (
+                f"  mean {r.objective / total_weight:,.1f} m" if name == "median" else ""
+            )
+            print(
+                f"{name:16s}  {r.objective:14,.3f}  {where:24s}  "
+                f"({r.xy[0]:.3f}, {r.xy[1]:.3f}){extra}"
+            )
+
+        # Inside the try block so that a write failure (bad path, unsupported
+        # driver) is reported as a one-line error, like a read failure.
+        if args.out:
+            _write(args.out, results, net.crs, log)
+    except (ImportError, ValueError, *_file_errors()) as exc:
         raise SystemExit(f"error: {exc}") from exc
-
-    n_demand = len(demand_nodes) if demand_nodes is not None else net.n_nodes
-    total_weight = float(np.sum(weights)) if weights is not None else float(n_demand)
-    for name, r in results.items():
-        where = f"node {r.node}" if r.node is not None else f"edge {r.edge} @ {r.t:.1f} m"
-        extra = f"  mean {r.objective / total_weight:,.1f} m" if name == "median" else ""
-        print(
-            f"{name:16s}  {r.objective:14,.3f}  {where:24s}  "
-            f"({r.xy[0]:.3f}, {r.xy[1]:.3f}){extra}"
-        )
-
-    if args.out:
-        _write(args.out, results, net.crs, log)
     return 0
 
 

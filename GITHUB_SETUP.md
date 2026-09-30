@@ -18,23 +18,26 @@ python -m pytest -q
 python -m netcenter.cli --help
 ```
 
-A clean v0.3.0 tree should report **69 passed**.
+A clean tree should report **111 passed**.
 
 7. Commit only after the tests pass.
 
 Suggested commit message:
 
 ```text
-Release netcenter v0.3.0: strengthen topology and memory safety
+Fix node identity, ring closure, float32 median, and parallel Dijkstra
 ```
 
 Suggested description:
 
 ```text
-Generalizes safe shared-vertex noding to true T- and X-junctions, removes
-orphan nodes after geometry filtering, streams parallel Dijkstra blocks into a
-preallocated matrix, restores conservative worker defaults, and aligns package
-metadata, documentation, and regression tests.
+Replaces grid-based node identity with a distance tolerance, so junctions are
+not split by floating-point noise and nearly closed rings are not deleted;
+splits lines that end on themselves; fixes a crash with NumPy 2.0.0; removes a
+hidden float64 copy and float32 summation error in the median; makes --jobs
+split shortest-path work across workers; reports GIS file errors as one-line
+CLI messages; adds a faster pruning bound; rebuilds the technical-note PDF from
+its source. See CHANGELOG.md, section Unreleased.
 ```
 
 ## New repository

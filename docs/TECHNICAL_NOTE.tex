@@ -245,9 +245,12 @@ file-conversion step.
 
 The default behavior is \emph{shared-source-vertex noding}.
 
-If a snapped coordinate already appears as a source vertex in at least two
-distinct input LineStrings, the location is treated as a junction and the
-participating lines are split there.
+A source-vertex location is treated as a junction when vertices of at least
+two distinct input LineStrings lie there, or when a line endpoint lies there.
+The second condition includes a line's own endpoint: a line that ends on one of
+its own interior vertices (for example, a cul-de-sac turning loop) is split
+where it touches itself. Every line is split at each of its interior vertices
+that lies at a junction.
 
 This recovers common T-junctions and shared interior-interior junctions already
 encoded in source linework.
@@ -304,14 +307,31 @@ vertices.
 Reducing unnecessary shape vertices matters because the shortest-path matrix
 scales with the number of graph nodes.
 
-Line merging is delegated to Shapely/GEOS.
+In the default and endpoint-only modes, an intermediate shape coordinate
+becomes a graph vertex only if it is a junction. Lines are not merged: where two
+input lines meet end to end and no third line meets them there, the meeting
+point remains a graph vertex of degree two. Line merging (Shapely/GEOS
+\texttt{line\_merge}) runs only in the explicit planar-noding mode, after
+noding.
 
-\subsection{Matching near-identical coordinates}
+\subsection{Matching near-identical coordinates}\label{subsec:matching}
 
 Endpoints intended to coincide may differ at very small floating-point scales.
 
-The graph builder quantizes coordinates to a configurable grid before assigning
-node identity. This is an engineering convention rather than a named algorithm.
+Two coordinates closer than the snap distance (default \(0.1\)\,m) are treated
+as one network location, and the rule is applied transitively (single-linkage
+clustering, computed with a k-d tree). The same rule decides node identity,
+which source vertices are shared junctions, and whether a line is a ring.
+Within one line, two vertices are linked only when one of them is an endpoint
+and the line travels more than the snap distance between them, so the closely
+spaced shape vertices of a densely digitized road are not merged. This is an
+engineering convention rather than a named algorithm.
+
+The first public release rounded coordinates to a grid with the snap spacing.
+Two copies of one junction that differ only by floating-point noise could then
+fall on opposite sides of a cell boundary and become two nodes, which cut the
+road. Node numbering still follows the grid cells, so node indices are the same
+as in that release.
 
 \subsection{Parallel edges}
 
@@ -332,8 +352,9 @@ A closed LineString has coincident start and end coordinates.
 If treated naively, it can become a self-loop and disappear during graph
 cleaning.
 
-The graph builder detects closed and nearly closed rings and splits them before
-graph construction so that the physical network remains represented.
+A line whose two ends are one network location, under the rule above, is split
+at half its length before graph construction, so that the physical network
+remains represented.
 
 \subsection{Filtered slivers and orphan nodes}
 
@@ -459,6 +480,11 @@ Shortest paths are computed using Dijkstra's algorithm
 The graph is required to be square, non-negative, and symmetric because the
 package currently models undirected networks.
 
+Because symmetry is validated, SciPy's Dijkstra routine is called in its directed
+mode. This gives identical distances and is faster, because the undirected mode
+builds a transposed copy of the graph on every call and relaxes each stored
+edge twice.
+
 \subsection{Computational cost}
 
 For \(k\) demand sources, \(n\) nodes, and \(m\) edges, a conventional
@@ -492,6 +518,10 @@ approximately \(rn\) floating-point values.
 The \texttt{max\_temp\_mb} parameter controls the target size of one temporary
 float64 block per worker.
 
+When several workers are requested, the sources are also split into at least
+as many blocks as there are workers, so that every worker receives work even
+when all rows would fit in one memory block.
+
 \subsection{Streaming parallel assembly}
 
 When several Dijkstra blocks are computed in parallel, completed blocks are
@@ -521,6 +551,11 @@ for float32.
 Float32 is a memory--precision trade-off. The optimization remains internally
 consistent with the stored matrix, but the stored metric is itself rounded
 relative to float64 output.
+
+The median objective is accumulated in float64 even when the matrix is stored
+in float32, because a float32 running sum over thousands of demand rows loses
+metres of precision. Weighted sums are evaluated in bounded row blocks, so the
+float32 matrix is never converted to float64 in one piece.
 
 \section{Weighted 1-median}
 
@@ -832,6 +867,35 @@ LB_e
 
 If \(LB_e\) cannot improve the incumbent radius, the edge need not be swept.
 
+A second, cheaper bound uses only the vertex eccentricities
+
+\[
+E(v)
+=
+\max_iD_{iv},
+\]
+
+which are already computed for the vertex center. By the triangle inequality,
+\(D_{iu}\le t+d_G(q_i,x(t))\), so \(E_e(t)\ge E(u)-t\). In the same way,
+\(E_e(t)\ge E(w)-(L-t)\). The larger of the two right-hand sides is smallest
+where they are equal, so for every \(t\in[0,L]\)
+
+\begin{equation}
+E_e(t)
+\ge
+LB'_e
+:=
+\tfrac12\bigl(E(u)+E(w)-L\bigr).
+\label{eq:eccbound}
+\end{equation}
+
+\(LB'_e\) costs \(O(1)\) per edge, while \(LB_e\) costs \(O(k)\) per edge. The
+implementation evaluates \(LB'_e\) for every edge and \(LB_e\) only for the edges
+that pass \(LB'_e\). An edge is swept only if both bounds are below the incumbent
+radius plus the numerical margin. Both are valid lower bounds, so the result is
+unchanged. On the road-like test networks used during development, \(LB'_e\)
+alone left about five of roughly 18{,}600 edges.
+
 This is exact branch-and-bound logic in real arithmetic.
 
 It is an implementation acceleration rather than a different facility-location
@@ -1054,9 +1118,9 @@ Columnwise maximum followed by minimum.
 
 Edge lower bounds
 &
-\(O(km)\)
+\(O(m+km')\)
 &
-Blocked and vectorized.
+\(LB'_e\) on all \(m\) edges; \(LB_e\) only on the \(m'\) survivors.
 \\
 
 Absolute-center sweep
@@ -1209,8 +1273,10 @@ floating-point noise.
 
 Exact closure tests may miss this case.
 
-The graph builder uses the same snapping tolerance used for node identity when
-detecting nearly closed rings.
+The graph builder now decides ring closure with exactly the rule used for node
+identity: a line is a ring when both ends are one network location. In the
+first public release the two decisions still used different rules; see
+Section~\ref{sec:post-release}.
 
 \subsection{False junctions at grade-separated crossings}
 
@@ -1226,7 +1292,8 @@ interior of another but still missed cases where two lines both continued
 through a shared source vertex.
 
 The current rule defines a junction by participation of at least two distinct
-input LineStrings at the snapped source coordinate.
+input LineStrings at a source-vertex location, or by a line endpoint at that
+location.
 
 \subsection{Filtered slivers leaving orphan graph nodes}
 
@@ -1234,6 +1301,94 @@ Assigning node IDs before removing slivers and snapped self-loops can leave
 unused rows and columns in the sparse graph.
 
 The current implementation compacts node IDs after edge filtering.
+
+\section{Changes after the first public release}\label{sec:post-release}
+
+A code review in September 2026, again AI-assisted, found the defects below in
+v0.1.0. Each was reproduced before it was fixed, and each now has a regression
+test. The package version number was not changed.
+
+\subsection{Junctions split at grid-cell boundaries}
+
+Node identity rounded coordinates to a grid. A junction coordinate on a cell
+boundary, such as a centimetre coordinate ending in 5 with the default
+\(0.1\)\,m snap, was assigned to one cell or the other by floating-point noise
+of about \(10^{-9}\)\,m. The two copies of one junction then became two nodes
+and the road was cut. Node identity now uses the distance rule of
+Section~\ref{subsec:matching}.
+
+\subsection{Rings deleted when closure and identity disagreed}
+
+Ring closure was tested by Euclidean distance (at most the snap distance), but
+endpoints were merged by grid cell. Ends up to \(\sqrt2\times0.1\)\,m apart in
+one cell became one node without passing the closure test, so the ring became a
+self-loop and was deleted. With a \(0.113\)\,m end gap, a \(1.9\)\,km ring
+disappeared. A line is now a ring when both ends are one network location.
+
+\subsection{Lines that end on themselves}
+
+A line that ends on one of its own interior vertices, such as a cul-de-sac
+turning loop drawn as one line, was not split there, because a shared vertex
+required two distinct lines. In a test, the road distance from the loop entrance
+to the loop junction was \(500\)\,m instead of \(100\)\,m.
+
+\subsection{Failure with NumPy 2.0.0}
+
+NumPy 2.0.0, which the declared requirement \texttt{numpy>=1.24} allows, returns
+a two-dimensional inverse from \texttt{numpy.unique} with \texttt{axis=0} and
+\texttt{return\_inverse=True}. The shared-vertex step did not flatten it, so
+graph construction failed for every input with two or more lines. The
+continuous-integration workflow installs only the newest versions, so it could
+not detect this.
+
+\subsection{Float32 median memory and precision}
+
+With float32 storage, the weighted median evaluated \texttt{weights @ D}, which
+converts the whole matrix to a float64 copy: for a \(92\)\,MiB matrix,
+\(184\)\,MiB of extra memory, more than float64 storage itself would have used.
+Without weights, column sums were accumulated in float32. For \(2{,}000\) demand
+points and \(12{,}000\) nodes, the reported objective was \(1.9\)\,m too small,
+and objectives at other nodes were off by up to \(58.9\)\,m in either direction;
+in that test the chosen node was still correct. Both sums are now accumulated in
+float64, in bounded row blocks.
+
+\subsection{Parallel shortest paths not used}
+
+Sources were split into blocks by memory only. With the default \(256\)\,MiB
+budget, a \(2{,}000\times12{,}000\) problem fits in one block, so it ran
+serially whatever number of workers was requested.
+
+\subsection{Command-line error reporting}
+
+GeoPandas 1.x reads and writes files through pyogrio, whose errors derive from
+\texttt{RuntimeError}, which the command-line interface did not catch. A
+mistyped input path therefore produced a Python traceback instead of a one-line
+error message.
+
+\subsection{Optimizations}
+
+\begin{itemize}[leftmargin=1.5em]
+
+\item The eccentricity bound \(LB'_e\) of Equation~\eqref{eq:eccbound}: the
+absolute-center stage took \(0.31\)\,s before and \(0.03\)\,s after for
+\(2{,}000\) demand points and \(12{,}000\) nodes, and \(2.1\)\,s before and
+\(0.24\)\,s after with every node as demand.
+
+\item Directed Dijkstra on the validated symmetric graph: about \(10\%\) faster,
+with identical distances.
+
+\item Vectorized line cutting in shared-vertex noding: graph construction took
+\(2.5\)\,s before and \(0.8\)\,s after on OSM-shaped input with
+\(160{,}000\) junctions.
+
+\item Distance-matrix validation by minimum and maximum instead of full-size
+boolean masks.
+
+\end{itemize}
+
+All timings were measured on one CPU core. On inputs without the defects above,
+the results are identical to v0.1.0: the same nodes, node numbering, edges, and
+result locations, with objective values equal to within \(10^{-15}\) relative.
 
 \section{Validation strategy}
 
@@ -1303,7 +1458,21 @@ Regression tests cover failures including:
 
 \item float32 pruning behavior;
 
-\item package-version and CLI consistency.
+\item package-version and CLI consistency;
+
+\item junctions split by floating-point noise at a grid-cell boundary;
+
+\item rings deleted because ring closure and node identity used different rules;
+
+\item lines that end on one of their own interior vertices;
+
+\item float32 median memory use and summation precision;
+
+\item parallel Dijkstra requests that fit in one memory block;
+
+\item CLI error messages for unreadable input and unwritable output;
+
+\item agreement of the two pruning bounds with an unpruned sweep.
 
 \end{itemize}
 
@@ -1379,7 +1548,7 @@ The table below summarizes the distinction.
 &
 \textbf{Early prototype}
 &
-\textbf{v0.1.0}
+\textbf{Current code}
 &
 \textbf{Changed mathematics?}
 \\
@@ -1391,7 +1560,7 @@ The table below summarizes the distinction.
 &
 \textbf{Early prototype}
 &
-\textbf{v0.1.0}
+\textbf{Current code}
 &
 \textbf{Changed mathematics?}
 \\
@@ -1442,7 +1611,7 @@ Edge pruning
 &
 Lower bound based on endpoint distances.
 &
-Same bound with more conservative floating-point handling.
+Same bound, preceded by a cheaper eccentricity bound, with more conservative floating-point handling.
 &
 No.
 \\
@@ -1472,7 +1641,7 @@ Shared interior junctions
 &
 Not fully recovered in the earliest rule.
 &
-Recovered when distinct source LineStrings share a snapped source vertex.
+Recovered when distinct source LineStrings share a source-vertex location, or a line ends on a vertex of another line or of itself.
 &
 Preprocessing changed.
 \\
@@ -1512,7 +1681,7 @@ Closed rings
 &
 Could disappear as self-loops.
 &
-Preserved by splitting before graph construction.
+Preserved by splitting before graph construction; closure uses the node-identity rule.
 &
 Bug fix.
 \\
@@ -1532,7 +1701,7 @@ Precision
 &
 Primarily float64-oriented.
 &
-float32 storage optional with safe pruning tolerance.
+float32 storage optional with safe pruning tolerance; median sums accumulated in float64.
 &
 Optional numerical approximation only.
 \\

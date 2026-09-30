@@ -204,3 +204,100 @@ def test_fractional_edge_indices_are_rejected_instead_of_truncated():
 def test_fractional_topology_indices_are_rejected_instead_of_truncated():
     with pytest.raises(ValueError, match="integer node indices"):
         make_csr([0.5], [1.0], [1.0], 2)
+
+
+# ---------------------------------------------------------------------------
+# Regressions and properties added in the September 2026 review.
+# ---------------------------------------------------------------------------
+
+
+def _exact_edge_minima(D, u, w, length):
+    from netcenter.center import _sweep
+
+    return _sweep(D, u, w, length, 10**6)[0]
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_both_pruning_bounds_are_below_the_exact_edge_minimum(seed):
+    from netcenter.center import _eccentricity_bound, _endpoint_bound
+
+    rng = np.random.default_rng(100 + seed)
+    u, w, length = random_network(rng, n=40)
+    D = full_D(40, u, w, length)[rng.choice(40, size=12, replace=False)]
+    exact = _exact_edge_minima(D, u, w, length)
+    assert (_eccentricity_bound(D.max(axis=0), u, w, length) <= exact + 1e-9).all()
+    assert (_endpoint_bound(D, u, w, 10**6) <= exact + 1e-9).all()
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_pruned_result_equals_sweeping_every_edge(seed):
+    rng = np.random.default_rng(200 + seed)
+    u, w, length = random_network(rng, n=40)
+    D = full_D(40, u, w, length)[rng.choice(40, size=15, replace=False)]
+    exact = min(_exact_edge_minima(D, u, w, length).min(), vertex_center(D).objective)
+    assert absolute_center(D, u, w, length).objective == pytest.approx(exact, abs=1e-9)
+
+
+def _cycle(n=24):
+    u = np.arange(n)
+    w = (u + 1) % n
+    return u, w, np.full(n, 10.0)
+
+
+@pytest.mark.parametrize("backend", ["threading", "loky"])
+def test_parallel_sweep_branch_matches_serial(backend, monkeypatch):
+    # On a cycle every point has the same eccentricity, so no edge can be
+    # pruned; the v0.1.0 tests never reached the parallel branch.
+    import netcenter.center as center
+
+    u, w, length = _cycle()
+    D = full_D(len(u), u, w, length)
+    serial = absolute_center(D, u, w, length, n_jobs=1)
+    calls = []
+    if backend == "threading":
+        original = center._sweep
+        monkeypatch.setattr(center, "_sweep", lambda *a: calls.append(1) or original(*a))
+    parallel = absolute_center(
+        D, u, w, length, n_jobs=2, backend=backend, min_parallel_work=0
+    )
+    assert parallel.objective == pytest.approx(serial.objective)
+    assert parallel.kind == serial.kind
+    if backend == "threading":
+        assert len(calls) == 2
+
+
+def test_float32_weighted_median_does_not_copy_the_matrix_to_float64():
+    import tracemalloc
+
+    rng = np.random.default_rng(5)
+    # Larger than one float64 work block (DEFAULT_MAX_CELLS cells), as in use.
+    D32 = rng.uniform(0, 5e4, size=(1500, 4000)).astype(np.float32)
+    weights = rng.uniform(1, 100, size=1500)
+    tracemalloc.start()
+    res = weighted_median(D32, weights)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    # v0.1.0 evaluated ``weights @ D32``, which converts all of D32 to a
+    # float64 copy: a peak of twice D32.nbytes. Blocked evaluation stays small.
+    assert peak < 0.5 * D32.nbytes
+    exact = weights @ D32.astype(np.float64)
+    assert res.node == int(np.argmin(exact))
+    assert res.objective == pytest.approx(exact.min(), rel=1e-12)
+
+
+def test_float32_median_sum_is_accumulated_in_float64():
+    D32 = np.full((200_000, 2), 0.1, dtype=np.float32)
+    D32[:, 1] = 0.2
+    exact = D32.astype(np.float64).sum(axis=0)
+    res = weighted_median(D32)
+    # A float32 running sum of 200,000 values is off by about 1 %.
+    assert res.objective == pytest.approx(exact[0], rel=1e-9)
+
+
+def test_distance_matrix_check_rejects_bad_values_without_masks():
+    with pytest.raises(ValueError, match="NaN or infinite"):
+        vertex_center(np.array([[0.0, np.nan]]))
+    with pytest.raises(ValueError, match="negative"):
+        vertex_center(np.array([[0.0, -1.0]]))
+    with pytest.raises(ValueError, match="real numeric"):
+        vertex_center(np.array([[True, False]]))

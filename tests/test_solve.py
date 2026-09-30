@@ -1,10 +1,10 @@
 import pytest
-from shapely.geometry import LineString
 
-pytest.importorskip("geopandas")
-import geopandas as gpd
+# Skip (rather than fail at import) when only the numerical core is installed.
+gpd = pytest.importorskip("geopandas")
+from shapely.geometry import LineString  # noqa: E402
 
-from netcenter.graph import build_network
+from netcenter.graph import build_network  # noqa: E402
 from netcenter.solve import _coalesce_demands, solve
 
 

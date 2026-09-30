@@ -28,11 +28,13 @@ cross on the page without a valid turn between them (for example, a bridge over
 a road), while a genuine OSM-style junction can be stored as a coordinate in
 the *interior* of one or both LineStrings.
 
-The v0.3 default therefore uses a deliberately conservative rule: if a snapped
-coordinate location is already present in at least two distinct input
-LineStrings, it is treated as a shared source vertex and participating lines are
-split there. This recovers T- and X-junctions already encoded by the source but
-does not create a new coordinate at a mere geometric crossing.
+The default therefore uses a deliberately conservative rule: a source-vertex
+location is a junction when at least two distinct input LineStrings use it, or
+when a line ends there. The second case includes a line that ends on one of its
+own interior vertices, such as a cul-de-sac turning loop. Every line is split at
+each of its interior vertices that lies at a junction. This recovers T- and
+X-junctions already encoded by the source but does not create a new coordinate
+at a mere geometric crossing.
 
 This shared-vertex recovery is straightforward array bookkeeping rather than a
 new graph algorithm; no novelty is claimed.
@@ -61,13 +63,22 @@ routing; the rest describe shape. Merging chains of segments that meet
 end-to-end at a point where nothing else joins can reduce `n` dramatically.
 The distance matrix costs `O(kn)` memory and becomes `O(n²)` when every node is
 used as demand, so unnecessary shape vertices can dominate the problem.
-Implemented by `shapely.line_merge`, again GEOS/JTS (Martin Davis).
+Implemented by `shapely.line_merge`, again GEOS/JTS (Martin Davis). This
+merging runs only in the explicit planar-noding mode. In the default and
+endpoint-only modes lines are not merged, so a point where two lines meet end to
+end, with no third line, remains a node of degree two.
 
 ### Matching near-identical coordinates
 
-Endpoints meant to coincide often differ in the last decimal places. They are
-rounded to a tolerance and compared as integers. This is folklore rather than
-anyone's algorithm.
+Endpoints meant to coincide often differ in the last decimal places. Two
+coordinates closer than the snap distance are treated as one location, and the
+rule is applied transitively (single-linkage clustering over a k-d tree). Within
+one line, two vertices are linked only when one of them is an endpoint and the
+line travels more than the snap distance between them, so a densely digitised
+road is not merged into one location. One rule decides node identity,
+shared-vertex junctions, and ring closure. This is folklore rather than
+anyone's algorithm. Until September 2026 coordinates were rounded to a grid and
+compared as integers; see bugs 9 and 10 below.
 
 ### Finding the connected pieces
 
@@ -221,8 +232,8 @@ hardest for mistakes.
    and generally faster on large blocks.
 
 5. **Conservative parallelism.** `n_jobs` is a ceiling, not a promise. Small
-   jobs remain serial because worker startup can dominate useful work. v0.3
-   defaults to one worker and exposes both process and thread backends for
+   jobs remain serial because worker startup can dominate useful work. The
+   package defaults to one worker and exposes both process and thread backends for
    deliberate benchmarking rather than assuming one is universally superior.
 
 6. **Bounded shortest-path chunks.** SciPy returns Dijkstra distances in
@@ -243,6 +254,31 @@ hardest for mistakes.
 
 The centre pruning step also uses a dtype-and-scale-aware safety margin so
 float32 rounding cannot discard a borderline candidate edge.
+
+The following were added in a September 2026 review, also with Claude:
+
+9. **Eccentricity pre-bound.** By the triangle inequality, a point at distance
+   `t` from `u` has eccentricity at least `ecc(u) - t` and at least
+   `ecc(w) - (L - t)`; the larger of the two is never below
+   `(ecc(u) + ecc(w) - L) / 2`. This bound costs one operation per segment, uses
+   the junction eccentricities that the Jordan centre already needs, and is
+   applied before the bound of item 1, which costs `k` operations per segment.
+   On the tested
+   road-like networks it alone leaves about five of 18,600 segments; the
+   absolute-centre stage became about nine times faster.
+
+10. **Directed Dijkstra on the validated symmetric graph.** SciPy's undirected
+    mode builds a transposed graph on every call and relaxes each edge twice.
+    The graph is already checked to be symmetric, so directed mode gives
+    identical distances about 10 % faster.
+
+11. **Vectorised line cutting.** Shared-vertex noding builds all pieces in one
+    `shapely.linestrings` call instead of one Python-level call per piece:
+    about three times faster graph construction on OSM-shaped input.
+
+12. **Mask-free validation.** The distance matrix is checked with one `min()`
+    and one `max()` (NaN propagates through both) instead of full-size boolean
+    masks.
 
 ### An optimisation that was tried and rejected
 
@@ -285,9 +321,9 @@ regression history.
 5. **Nearly closed rings deleted.** GIS rings are sometimes visually closed but
    have a final coordinate that differs from the first by floating-point dust.
    Exact `is_closed` testing can miss them; endpoint snapping then maps both ends
-   to one node and the resulting self-loop is discarded. The hardened graph builder detects closure
-   using the same endpoint tolerance used for node identity and splits the ring
-   before that can happen.
+   to one node and the resulting self-loop is discarded. The graph builder now
+   splits such rings before that can happen. The first fix was incomplete; see
+   bug 10.
 
 6. **False junctions at grade-separated crossings.** Treating every geometric
    crossing as a routable junction can connect a bridge to the road below it.
@@ -296,9 +332,10 @@ regression history.
 7. **Shared-vertex noding stopped at T-junctions.** An intermediate patch split
    a through-road when another line *ended* on one of its interior vertices.
    That still missed a genuine junction where two ways both continued through
-   the same shared source vertex. v0.3 defines a junction by participation of
-   at least two distinct input LineStrings, covering both T and X cases without
-   inventing a node at an ordinary geometric crossing.
+   the same shared source vertex. The current rule defines a junction by
+   participation of at least two distinct input LineStrings, or by a line
+   endpoint, covering both T and X cases without inventing a node at an
+   ordinary geometric crossing.
 
 8. **Filtered slivers left orphan graph nodes.** Node IDs were assigned before
    tiny edges and snapped self-loops were removed. With component filtering
@@ -306,8 +343,47 @@ regression history.
    produce infinite distances in an otherwise connected surviving network.
    Node IDs are now compacted immediately after edge filtering.
 
+Found in the September 2026 review of v0.1.0:
+
+9. **Junctions split at grid-cell boundaries.** Node identity rounded
+   coordinates to a 0.1 m grid. A centimetre coordinate ending in 5 lies exactly
+   on a cell boundary, so floating-point noise of 1e-9 m put the two copies of
+   one junction into different cells and cut the road. Fixed by the
+   distance-based location rule above.
+
+10. **Rings deleted when closure and identity disagreed.** The fix for bug 5
+    tested ring closure by Euclidean distance but merged endpoints by grid cell.
+    Ends 0.113 m apart in one cell became one node without passing the closure
+    test, and a 1.9 km ring was deleted again. A line is now a ring exactly when
+    both ends are one location.
+
+11. **Lines that end on themselves were not split.** A cul-de-sac turning loop
+    drawn as one line was kept as one edge, so the road distance from the loop
+    entrance to the loop junction was 500 m instead of 100 m in a test.
+
+12. **Crash with NumPy 2.0.0.** That release, allowed by `numpy>=1.24`, returns a
+    two-dimensional inverse from `numpy.unique(..., axis=0,
+    return_inverse=True)`; the shared-vertex step did not flatten it, so graph
+    construction failed for any input with two or more lines. CI installs only
+    the newest versions and could not detect it.
+
+13. **Float32 median.** The weighted median evaluated `weights @ D`, which
+    converts a float32 matrix to a full float64 copy (184 MiB for a 92 MiB
+    matrix). The unweighted median summed in float32, so on a 2,000 × 12,000
+    test the node objectives were off by up to 58.9 m. Both are now accumulated
+    in float64 in bounded blocks.
+
+14. **Parallel Dijkstra silently serial.** Sources were split by memory only,
+    so any problem that fitted one 256 MiB block ran serially whatever
+    `n_jobs` was.
+
+15. **Command-line tracebacks.** pyogrio's file errors derive from
+    `RuntimeError`, which the CLI did not catch, so a mistyped input path printed
+    a traceback instead of a one-line error.
+
 Each has a regression test in `tests/test_graph.py`, `tests/test_distances.py`,
-or `tests/test_center.py`.
+`tests/test_center.py`, or `tests/test_cli.py`, except bug 12, which was
+verified by running the test suite under NumPy 2.0.0.
 
 ### Verification
 
@@ -316,6 +392,9 @@ are sampled at 4,001 points along every segment, and the sweep's answer must be
 no worse than the sampled minimum and within the sampling resolution of it.
 Further tests confirm hand-computable cases, that the answer never exceeds the
 Jordan centre, and that results are invariant to worker count and block size.
+Both pruning bounds are checked against the exact minimum of every segment on
+random networks, and the pruned answer is compared with a sweep of every
+segment.
 
 Brute force is a genuinely independent check — it shares no code with the sweep
 — but it only verifies the sweep given a distance matrix. It does not verify

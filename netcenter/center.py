@@ -53,11 +53,11 @@ Your eccentricity at ``t`` is the worst of these over all demands -- the
 highest tent above you. With many tents that upper outline is a jagged ridge of
 peaks and valleys, and we want its lowest valley.
 
-The trick that makes this fast: tent ``v`` is still rising exactly while
-``t <= t*_v = (b_v - a_v + L) / 2``. Sort the demands by that switchover point.
-Between two consecutive switchovers the set of still-rising tents is a fixed
-block at one end of the sorted list and the set of already-falling tents a
-fixed block at the other, so across that whole stretch the ridge simplifies to
+Tent ``v`` is still rising exactly while ``t <= t*_v = (b_v - a_v + L) / 2``.
+Sort the demands by that switchover point. Between two consecutive switchovers
+the set of still-rising tents is a fixed block at one end of the sorted list
+and the set of already-falling tents a fixed block at the other, so across that
+whole stretch the ridge simplifies to
 
     ecc(t) = max(A + t,  B + L - t)
 
@@ -68,6 +68,27 @@ equal. So each stretch is solved by arithmetic, with no searching or sampling.
 
 Sorting costs ``k log k`` per segment for ``k`` demands. Everything else is
 running maximums, which numpy computes in a single pass.
+
+WHICH SEGMENTS ARE SWEPT
+------------------------
+The best intersection already gives a feasible radius ``R``. A segment is swept
+only if a lower bound on the eccentricity of every point on it is below ``R``.
+Two valid bounds are used, cheapest first:
+
+1. From the endpoint eccentricities alone (one subtraction per segment).
+   A point at ``t`` is at most ``t`` from ``u``, so by the triangle inequality
+   ``ecc(t) >= ecc(u) - t``; likewise ``ecc(t) >= ecc(w) - (L - t)``. The
+   larger of the two is smallest where they are equal, so for every ``t``
+
+       ecc(t) >= (ecc(u) + ecc(w) - L) / 2.
+
+2. From every demand (``k`` operations per segment), applied only to segments
+   that pass bound 1. Every route leaves the segment through ``u`` or ``w``,
+   so ``d(t, v) >= min(a_v, b_v)`` and ``ecc(t) >= max_v min(a_v, b_v)``.
+
+A segment is swept only if it passes both bounds. On road networks bound 1
+alone usually leaves a handful of segments, so the ``k``-per-segment work of
+bound 2 is spent almost nowhere.
 """
 
 from __future__ import annotations
@@ -75,6 +96,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+from netcenter import _checks
 
 # How many array cells to process at once. Peak memory in the sweep is roughly
 # 15 arrays of this size in 8-byte floats, so 1,000,000 is about 120 MB per
@@ -103,8 +126,19 @@ class CenterResult:
     xy: tuple[float, float] | None = None
 
 
-def _validate_D(D: np.ndarray) -> np.ndarray:
-    """Validate the demand-by-node distance matrix used by every solver."""
+# ---------------------------------------------------------------------------
+# Input checks
+# ---------------------------------------------------------------------------
+
+
+def _check_distance_matrix(D) -> np.ndarray:
+    """Validate the demand-by-node distance matrix used by every solver.
+
+    NaN propagates through ``min()`` and ``max()``, and an infinity shows up in
+    one of them, so two reductions check every cell. This avoids the two
+    full-size boolean masks that ``isfinite(D).all()`` and ``(D < 0).any()``
+    would allocate.
+    """
     D = np.asarray(D)
     if D.ndim != 2:
         raise ValueError("D must be a 2-D array shaped (demands, nodes)")
@@ -112,32 +146,27 @@ def _validate_D(D: np.ndarray) -> np.ndarray:
         raise ValueError("D contains no demand points")
     if D.shape[1] == 0:
         raise ValueError("D contains no network nodes")
-    if not np.issubdtype(D.dtype, np.number):
-        raise ValueError("D must contain numeric distances")
-    if not np.isfinite(D).all():
+    if not (np.issubdtype(D.dtype, np.integer) or np.issubdtype(D.dtype, np.floating)):
+        raise ValueError("D must contain real numeric distances")
+    smallest, largest = D.min(), D.max()
+    if not (np.isfinite(smallest) and np.isfinite(largest)):
         raise ValueError("D contains NaN or infinite distances")
-    if (D < 0).any():
+    if smallest < 0:
         raise ValueError("D contains negative distances")
     return D
 
 
-def _validate_edges(D, edge_u, edge_w, edge_len):
+def _check_edges(n_nodes: int, edge_u, edge_w, edge_len):
     """Normalise and validate the segment arrays used by the centre sweep."""
-    edge_u_raw = np.asarray(edge_u)
-    edge_w_raw = np.asarray(edge_w)
-    if not np.issubdtype(edge_u_raw.dtype, np.integer) or not np.issubdtype(
-        edge_w_raw.dtype, np.integer
-    ):
-        raise ValueError("edge_u and edge_w must contain integer node indices")
-    edge_u = edge_u_raw.astype(np.int64, copy=False).reshape(-1)
-    edge_w = edge_w_raw.astype(np.int64, copy=False).reshape(-1)
+    edge_u = _checks.index_array(edge_u, "edge_u and edge_w")
+    edge_w = _checks.index_array(edge_w, "edge_u and edge_w")
     edge_len = np.asarray(edge_len, dtype=np.float64).reshape(-1)
     if not (len(edge_u) == len(edge_w) == len(edge_len)):
         raise ValueError("edge_u, edge_w and edge_len must be the same length")
     if len(edge_u):
         if edge_u.min() < 0 or edge_w.min() < 0:
             raise ValueError("edge endpoints must be non-negative node indices")
-        if edge_u.max() >= D.shape[1] or edge_w.max() >= D.shape[1]:
+        if edge_u.max() >= n_nodes or edge_w.max() >= n_nodes:
             raise ValueError("edge endpoint index is outside D's node columns")
         if not np.isfinite(edge_len).all():
             raise ValueError("edge lengths must be finite")
@@ -146,10 +175,34 @@ def _validate_edges(D, edge_u, edge_w, edge_len):
     return edge_u, edge_w, edge_len
 
 
+# ---------------------------------------------------------------------------
+# Median and vertex centre
+# ---------------------------------------------------------------------------
+
+
+def _median_objective(D: np.ndarray, weights: np.ndarray | None) -> np.ndarray:
+    """Total (weighted) distance from every node to the demand points.
+
+    Sums are accumulated in float64 even when ``D`` is stored as float32:
+    adding thousands of float32 values in float32 loses tens of metres.
+    Weighted sums are formed in row blocks so that a float32 ``D`` is never
+    converted to float64 in one piece, which would silently allocate a copy
+    twice the size of the matrix that ``--float32`` was meant to shrink.
+    """
+    if weights is None:
+        return D.sum(axis=0, dtype=np.float64)
+    total = np.zeros(D.shape[1], dtype=np.float64)
+    rows = max(1, DEFAULT_MAX_CELLS // D.shape[1])
+    for start in range(0, D.shape[0], rows):
+        block = D[start : start + rows].astype(np.float64, copy=False)
+        total += weights[start : start + rows] @ block
+        del block  # release before the next block is allocated
+    return total
+
+
 def vertex_eccentricity(D: np.ndarray) -> np.ndarray:
     """For every node, return its distance to the farthest demand point."""
-    D = _validate_D(D)
-    return D.max(axis=0)
+    return _check_distance_matrix(D).max(axis=0)
 
 
 def vertex_center(D: np.ndarray) -> CenterResult:
@@ -166,48 +219,35 @@ def weighted_median(D: np.ndarray, weights=None) -> CenterResult:
     chosen at a network vertex, so the continuous edge interiors do not need a
     second search for this objective.
     """
-    D = _validate_D(D)
-    if weights is None:
-        obj = D.sum(axis=0)
-    else:
-        w = np.asarray(weights, dtype=np.float64).reshape(-1)
-        if w.shape[0] != D.shape[0]:
-            raise ValueError(
-                f"got {w.shape[0]} weights for {D.shape[0]} demand points; "
-                "they must correspond one to one"
-            )
-        if not np.isfinite(w).all():
-            raise ValueError("weights contain NaN or infinity")
-        if (w < 0).any():
-            raise ValueError("weights must be non-negative")
-        if not (w > 0).any():
-            raise ValueError("at least one demand weight must be positive")
-        obj = w @ D
+    D = _check_distance_matrix(D)
+    w = None if weights is None else _checks.demand_weights(weights, D.shape[0])
+    obj = _median_objective(D, w)
     node = int(np.argmin(obj))
     return CenterResult("median", float(obj[node]), node=node)
 
 
-def _validate_jobs(n_jobs: int) -> int:
-    """Require a genuine positive integer worker count."""
-    if (
-        isinstance(n_jobs, (bool, np.bool_))
-        or not isinstance(n_jobs, (int, np.integer))
-        or n_jobs < 1
-    ):
-        raise ValueError("n_jobs must be a positive integer")
-    return int(n_jobs)
+# ---------------------------------------------------------------------------
+# Absolute centre: pruning bounds and the exact sweep
+# ---------------------------------------------------------------------------
 
 
-def _lower_bounds(D, edge_u, edge_w, max_cells) -> np.ndarray:
-    """Cheap segment-level lower bound used to prune the exact sweep."""
-    if (
-        isinstance(max_cells, (bool, np.bool_))
-        or not isinstance(max_cells, (int, np.integer))
-        or max_cells <= 0
-    ):
-        raise ValueError("max_cells must be a positive integer")
+def _eccentricity_bound(ecc, edge_u, edge_w, edge_len) -> np.ndarray:
+    """Lower bound ``(ecc(u) + ecc(w) - L) / 2`` for every point on each edge.
+
+    Derived in the module docstring (bound 1). Costs O(1) per edge because the
+    vertex eccentricities are already known from the vertex centre.
+    """
+    return 0.5 * (ecc[edge_u].astype(np.float64) + ecc[edge_w] - edge_len)
+
+
+def _endpoint_bound(D, edge_u, edge_w, max_cells) -> np.ndarray:
+    """Lower bound ``max_v min(D[v, u], D[v, w])`` for every point on each edge.
+
+    Derived in the module docstring (bound 2). Costs O(k) per edge, so it is
+    only applied to edges that survive :func:`_eccentricity_bound`.
+    """
     m = len(edge_u)
-    step = max(1, int(max_cells // max(1, D.shape[0])))
+    step = max(1, max_cells // D.shape[0])
     out = np.empty(m, dtype=np.float64)
     for s in range(0, m, step):
         e = min(s + step, m)
@@ -222,15 +262,9 @@ def _sweep(D, edge_u, edge_w, edge_len, max_cells):
     is derived from ``max_cells`` so the temporary arrays have a predictable
     upper bound independent of the total number of road segments.
     """
-    if (
-        isinstance(max_cells, (bool, np.bool_))
-        or not isinstance(max_cells, (int, np.integer))
-        or max_cells <= 0
-    ):
-        raise ValueError("max_cells must be a positive integer")
     m = len(edge_u)
     k = D.shape[0]
-    step = max(1, int(max_cells // max(1, k)))
+    step = max(1, max_cells // k)
     best_val = np.empty(m, dtype=np.float64)
     best_t = np.empty(m, dtype=np.float64)
 
@@ -256,6 +290,7 @@ def _sweep(D, edge_u, edge_w, edge_len, max_cells):
 
         # k switch points create k+1 intervals. On each interval the upper
         # envelope reduces to max(A+t, B+L-t), a V whose minimum is analytic.
+        # -inf padding means "no riser" / "no faller" at the two outer ends.
         neg = np.full((n_e, 1), -np.inf)
         lo = np.concatenate([np.zeros((n_e, 1)), ts], axis=1)
         hi = np.concatenate([ts, L], axis=1)
@@ -277,6 +312,19 @@ def _sweep(D, edge_u, edge_w, edge_len, max_cells):
     return best_val, best_t
 
 
+def _roundoff_margin(dtype, largest: float) -> float:
+    """Scale-aware allowance for rounding in the stored distances.
+
+    D may deliberately be stored as float32. The centre is then exact for the
+    stored distances, not for the unrounded float64 values SciPy originally
+    produced. Pruning must never discard an edge merely because rounding made
+    its lower bound a hair too large, so bounds are compared with this margin.
+    """
+    if np.issubdtype(dtype, np.floating):
+        return 8.0 * float(np.finfo(dtype).eps) * max(1.0, largest)
+    return 0.0
+
+
 def absolute_center(
     D: np.ndarray,
     edge_u: np.ndarray,
@@ -290,44 +338,37 @@ def absolute_center(
 ) -> CenterResult:
     """Return the exact absolute 1-centre for vertex demand.
 
-    The best vertex gives an incumbent radius. A mathematically safe lower
-    bound then discards segments that cannot improve it, and only the survivors
-    are swept exactly. This means the expensive sorting is normally performed
-    on a tiny fraction of the road network.
+    The best vertex gives an incumbent radius. Two mathematically safe lower
+    bounds (see the module docstring) then discard segments that cannot improve
+    it, and only the survivors are swept exactly. If no segment improves on
+    the best vertex by more than the numerical margin, the vertex result is
+    returned (``kind == "vertex_center"``).
     """
-    D = _validate_D(D)
-    edge_u, edge_w, edge_len = _validate_edges(D, edge_u, edge_w, edge_len)
-    if (
-        isinstance(max_cells, (bool, np.bool_))
-        or not isinstance(max_cells, (int, np.integer))
-        or max_cells <= 0
-    ):
-        raise ValueError("max_cells must be a positive integer")
-    if tol < 0 or not np.isfinite(tol):
+    D = _check_distance_matrix(D)
+    edge_u, edge_w, edge_len = _check_edges(D.shape[1], edge_u, edge_w, edge_len)
+    max_cells = _checks.positive_int(max_cells, "max_cells")
+    if not np.isfinite(tol) or tol < 0:
         raise ValueError("tol must be a finite non-negative number")
-    if not isinstance(min_parallel_work, (int, np.integer)) or min_parallel_work < 0:
-        raise ValueError("min_parallel_work must be a non-negative integer")
-    n_jobs = _validate_jobs(n_jobs)
-    if backend not in {"threading", "loky"}:
-        raise ValueError("backend must be 'threading' or 'loky'")
+    min_parallel_work = _checks.non_negative_int(min_parallel_work, "min_parallel_work")
+    n_jobs = _checks.positive_int(n_jobs, "n_jobs")
+    backend = _checks.backend(backend)
 
-    # D may deliberately be stored as float32. The centre is then exact for the
-    # stored distances, not for the unrounded float64 values SciPy originally
-    # produced. More importantly, pruning must never discard an edge merely
-    # because rounding made its lower bound a hair too large. Add a scale-aware
-    # numerical margin and keep borderline edges rather than pruning them.
-    if np.issubdtype(D.dtype, np.floating):
-        roundoff = 8.0 * np.finfo(D.dtype).eps * max(1.0, float(D.max()))
-    else:
-        roundoff = 0.0
-    effective_tol = max(float(tol), roundoff)
-
-    best = vertex_center(D)
+    # Incumbent: the vertex centre. Its eccentricities also feed bound 1.
+    ecc = D.max(axis=0)
+    best_node = int(np.argmin(ecc))
+    radius = float(ecc[best_node])
+    best = CenterResult("vertex_center", radius, node=best_node)
     if len(edge_u) == 0:
         return best
 
-    lb = _lower_bounds(D, edge_u, edge_w, max_cells)
-    keep = np.flatnonzero(lb < best.objective + effective_tol)
+    margin = max(float(tol), _roundoff_margin(D.dtype, float(ecc.max())))
+    threshold = radius + margin
+
+    # Bound 1 on every edge, then bound 2 on the survivors only.
+    keep = np.flatnonzero(_eccentricity_bound(ecc, edge_u, edge_w, edge_len) < threshold)
+    if keep.size:
+        bound2 = _endpoint_bound(D, edge_u[keep], edge_w[keep], max_cells)
+        keep = keep[bound2 < threshold]
     if keep.size == 0:
         return best
 
@@ -345,7 +386,7 @@ def absolute_center(
         offs = np.concatenate([p[1] for p in parts])
 
     i = int(np.argmin(vals))
-    if vals[i] >= best.objective - effective_tol:
+    if vals[i] >= radius - margin:
         return best
     return CenterResult(
         "absolute_center",

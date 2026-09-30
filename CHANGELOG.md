@@ -2,6 +2,39 @@
 
 All notable changes to this repository are recorded here.
 
+## Unreleased
+
+Changes from a code review in September 2026. The version number is still 0.1.0.
+
+### Fixed
+
+- Node identity no longer rounds coordinates to a grid. Two coordinates closer than `snap` metres are one location, applied transitively. Before, the two copies of one junction could be split into different grid cells by floating-point noise of about 1e-9 m, which cut the road.
+- Ring closure now uses the node-identity rule: a line is a ring when both ends are one location. Before, a ring whose ends were between 0.1 m and 0.141 m apart but in one grid cell became a self-loop and was deleted (a 1.9 km ring disappeared in a test).
+- A line that ends on one of its own interior vertices (for example, a cul-de-sac turning loop) is now split there. Before, it was one edge, and a 100 m road distance was reported as 500 m in a test.
+- Graph construction no longer fails with NumPy 2.0.0, which `numpy>=1.24` allows.
+- With `--float32`, the weighted median no longer creates a full-size float64 copy of the matrix, and the unweighted median is summed in float64 (errors of up to 58.9 m in a test).
+- `--jobs` now splits shortest-path work into at least one block per worker. Before, any problem that fitted in one memory block ran serially.
+- The command line reports unreadable input and unwritable output as one-line errors instead of Python tracebacks.
+- `tests/test_solve.py` now skips instead of failing when only the numerical core is installed.
+- The license is declared as an SPDX expression (`license = "MIT"`). The old table form and license classifier are deprecated by setuptools, which announces that builds using them will fail after 18 February 2027. The build backend now requires setuptools 77 or newer.
+- Outdated version references (v0.2, v0.3.0) were removed; the committed `docs/TECHNICAL_NOTE.pdf`, which was rendered from an older source, was rebuilt from `docs/TECHNICAL_NOTE.tex`; the documentation no longer claims that line merging runs in the default topology mode.
+
+### Changed
+
+- `snap` is now a distance tolerance rather than a grid spacing. A very small `snap` is accepted (only identical coordinates merge) instead of being rejected, and a segment shorter than `snap` collapses into one node. Node numbering is unchanged.
+
+### Performance
+
+- Absolute-centre pruning first applies the bound `(ecc(u) + ecc(w) - L) / 2`, which costs one operation per edge: about nine times faster for this stage.
+- Dijkstra runs in directed mode on the validated symmetric graph: identical distances, about 10 % faster.
+- Shared-vertex line cutting is vectorised: about three times faster graph construction on OSM-shaped input.
+- Distance-matrix validation no longer allocates full-size boolean masks.
+
+### Internal
+
+- New `netcenter/_checks.py` holds the input checks that were repeated in four modules.
+- New tests for every fix above, the pruning bounds, the parallel sweep branch, and the command line (`tests/test_cli.py`): 111 tests in total.
+
 ## 0.1.0 — 2026-09-24
 
 First public release of `netcenter`.

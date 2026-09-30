@@ -3,6 +3,12 @@
 This file records the pre-release review and hardening work that led to the
 first public release of `netcenter`, v0.1.0.
 
+> **Note added in September 2026.** A later review found that two fixes
+> recorded here were incomplete in v0.1.0: ring closure (sections 3.2 and 3.3)
+> still used a different rule from node identity, and shared-vertex recovery
+> (section 3.5) did not split a line that ends on itself. See `CHANGELOG.md`,
+> section *Unreleased*, and `docs/ALGORITHMS.md`, bugs 9 to 15.
+
 The codebase went through several internal development states before public
 release. Those states are treated here as **pre-release development history**,
 not as a public semantic-version sequence.

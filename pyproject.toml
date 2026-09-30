@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,11 +8,11 @@ version = "0.1.0"
 description = "Exact absolute 1-center and weighted 1-median tools for undirected road networks"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["gis", "road-network", "facility-location", "1-center", "1-median"]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",

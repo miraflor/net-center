@@ -232,7 +232,7 @@ A geometric crossing does not necessarily imply a valid turn. A bridge, tunnel, 
 netcenter roads.gpkg
 ```
 
-If two input LineStrings already contain the same source vertex, that location is treated as a genuine junction and participating lines are split there.
+If two input LineStrings already contain the same source vertex, or a line ends on a vertex of another line or of itself, that location is treated as a genuine junction and the lines are split there. The second case covers a line that ends on one of its own interior vertices, such as a cul-de-sac turning loop drawn as one line.
 
 This recovers common T- and X-junctions already encoded by the source data without automatically connecting every geometric crossing.
 
@@ -253,6 +253,10 @@ netcenter roads.gpkg --node-crossings
 This treats every geometric crossing as connected.
 
 Use it only for genuinely planar networks. On ordinary road data it can incorrectly connect a bridge to the road beneath it.
+
+### Node identity (`--snap`)
+
+Coordinates closer than `--snap` metres (default `0.1`) are treated as one network location, and the rule is applied transitively. The same rule decides node identity, which source vertices are shared junctions, and whether a line is a ring. A line whose two ends are one location (a closed or nearly closed ring) is split into two halves, so that it is not deleted as a self-loop. Within one line, nearby vertices are linked only when one of them is an endpoint and the line travels more than `--snap` metres between them, so a densely digitised road is not merged into one location.
 
 ---
 
@@ -387,17 +391,23 @@ The best vertex center first supplies an incumbent radius:
 R_V=\min_j\max_iD_{ij}.
 \]
 
-For edge \((u,w)\), the quantity
+Two lower bounds on the eccentricity anywhere on edge \((u,w)\) of length \(L\) are then used, cheapest first. The first needs only the vertex eccentricities \(E(v)=\max_iD_{iv}\), which are already known, and costs one operation per edge:
+
+\[
+LB'_e
+=
+\tfrac12\bigl(E(u)+E(w)-L\bigr).
+\]
+
+It follows from the triangle inequality: a point at distance \(t\) from \(u\) has eccentricity at least \(E(u)-t\) and at least \(E(w)-(L-t)\), and the larger of the two is never below \(LB'_e\). The second bound costs \(k\) operations per edge and is evaluated only for edges that pass the first:
 
 \[
 LB_e
 =
-\max_i \min\{D_{iu},D_{iw}\}
+\max_i \min\{D_{iu},D_{iw}\}.
 \]
 
-is a lower bound on eccentricity anywhere on that edge.
-
-If this bound cannot improve the incumbent, the edge is discarded before the more expensive breakpoint sweep.
+If either bound cannot improve the incumbent, the edge is discarded before the more expensive breakpoint sweep.
 
 This is an implementation acceleration; it does not change the optimization objective.
 
@@ -435,6 +445,8 @@ to roughly halve matrix storage.
 
 The solver uses a scale-aware numerical margin so float32 rounding cannot incorrectly prune a borderline edge, but the final result remains limited by the precision of the stored matrix.
 
+Median sums are accumulated in float64 even with `--float32`, and the weighted median reads the matrix in bounded blocks, so `--float32` does not create a hidden full-size float64 copy.
+
 ---
 
 ## Parallel execution
@@ -457,7 +469,7 @@ or:
 netcenter roads.gpkg --jobs 4 --backend threading
 ```
 
-`loky` uses processes; `threading` uses shared-memory threads.
+`loky` uses processes; `threading` uses shared-memory threads. With more than one worker, the shortest-path sources are split into at least as many blocks as there are workers.
 
 Performance depends on graph size, demand count, SciPy build, operating system, memory bandwidth, and available RAM. Benchmark the actual workload rather than assuming that more workers are always faster.
 
@@ -609,6 +621,7 @@ netcenter/
 │  └─ quickstart.py
 ├─ netcenter/
 │  ├─ __init__.py
+│  ├─ _checks.py
 │  ├─ center.py
 │  ├─ cli.py
 │  ├─ distances.py
@@ -617,6 +630,7 @@ netcenter/
 │  └─ topology.py
 ├─ tests/
 │  ├─ test_center.py
+│  ├─ test_cli.py
 │  ├─ test_distances.py
 │  ├─ test_graph.py
 │  ├─ test_package.py
@@ -659,11 +673,16 @@ The test suite includes:
 - interior-interior shared-vertex recovery;
 - bridge versus true-junction topology regressions;
 - parallel-edge handling;
-- closed rings;
+- closed rings, and rings whose ends are only nearly closed;
+- junctions whose two copies differ by floating-point noise;
+- lines that end on one of their own interior vertices;
+- pruning bounds checked against a sweep of every edge;
+- float32 median memory use and summation precision;
 - disconnected networks;
 - CRS and unit handling;
 - sliver and self-loop filtering;
 - worker and memory-control validation;
+- command-line runs, including one-line error messages for unreadable input and unwritable output;
 - package metadata checks.
 
 Run:

@@ -12,7 +12,10 @@ turn restrictions, and asymmetric travel costs are not represented.
 
 The default does **not** assume that every line crossing is a junction.
 Instead, it treats a coordinate already present in two or more distinct input
-LineStrings as a real shared vertex and splits participating lines there.
+LineStrings as a real shared vertex and splits participating lines there. It
+also splits a line where another line ends on it, and where a line ends on one
+of its own interior vertices (a loop, such as a cul-de-sac turning circle drawn
+as one line).
 
 That recovers common OSM-style junctions while preserving grade separation when
 a bridge and the road below merely cross geometrically and do not share a source
@@ -73,7 +76,7 @@ turn, clean or separate that topology before building the network.
 
 ## 5. Distances are metres
 
-Every solver result, edge length, snap grid spacing, and offset `t` is interpreted
+Every solver result, edge length, snap distance, and offset `t` is interpreted
 as metres.
 
 - metre-based projected input is preserved;
@@ -106,3 +109,18 @@ rather than interpreting unreachable travel as one facility-location problem.
 The centre objective is the maximum distance to the chosen demand nodes. It is
 not the continuous-network centre in which every point on every road is itself
 a demand location.
+
+## 9. Coordinates within the snap distance are one location
+
+Two coordinates closer than `snap` metres (default `0.1`) are one network
+location, and the rule is transitive: if A is within `snap` of B, and B within
+`snap` of C, then A, B, and C are one location even when A and C are farther
+apart. The same rule decides node identity, which source vertices are shared
+junctions, and whether a line is a ring.
+
+- A road segment shorter than `snap` collapses into one node.
+- Within one line, two vertices are linked only when one of them is an endpoint
+  and the line travels more than `snap` between them, so a densely digitised
+  road is not collapsed.
+- Choose `snap` above the coordinate noise of the data and well below the
+  shortest real road segment.
