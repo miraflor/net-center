@@ -2,7 +2,7 @@
 
 All notable changes to this repository are recorded here.
 
-## Unreleased
+## 0.2.0 — 2026-10-01
 
 Changes from a code review in September 2026. The version number is still 0.1.0.
 
