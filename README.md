@@ -735,3 +735,13 @@ Virtanen, P., Gommers, R., Oliphant, T. E., et al. (2020). SciPy 1.0: Fundamenta
 ## License
 
 MIT. See `LICENSE`.
+
+## Author and Citation
+
+**James Matthew Miraflor**  
+[Scientific Computing Laboratory](https://scl.dcs.upd.edu.ph/)  
+[Department of Computer Science](https://dcs.upd.edu.ph/)  
+College of Engineering  
+University of the Philippines Diliman
+
+**net-center** is authored and maintained by James Matthew Miraflor, with AI assistance in software development, debugging, testing, and documentation. Responsibility for the project's methodological decisions, scientific validity, and published outputs rests with the author.
