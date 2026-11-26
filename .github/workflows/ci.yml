@@ -56,5 +56,9 @@ jobs:
           python -m build
       - name: Smoke-test built wheel
         run: |
-          python -m pip install --force-reinstall --no-deps dist/*.whl
-          python -c "import net_center; print(net_center.__version__)"
+          python -m pip install --force-reinstall dist/*.whl
+          python -m pip check
+          cd "$RUNNER_TEMP"
+          python -I -c "import net_center, net_center.adaptive, net_center.absolute_groups, net_center.edge_snap; print(net_center.__version__, net_center.__file__)"
+          python -I -m net_center.cli --version
+          python -I -m net_center.adaptive_cli --help
