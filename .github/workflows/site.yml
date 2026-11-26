@@ -1,0 +1,21 @@
+name: site
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  visual-guide:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        run: |
+          node --check docs/assets/js/network.js
+          node --check docs/assets/js/visuals.js
+          node --check docs/assets/js/site.js
+      - name: Test visual-guide mathematics and local assets
+        run: node scripts/test_net_center_site.cjs

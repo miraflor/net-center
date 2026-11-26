@@ -2,6 +2,8 @@
 
 **Network location optimization and adaptive spatial representation.**
 
+**[Visual algorithm guide](https://miraflor.github.io/net-center/)** · [Local preview and Pages setup](docs/PAGES.md)
+
 `net-center` is a Python library and command-line toolkit for locating facilities or representative sites on undirected spatial networks. It uses shortest-path distance rather than straight-line distance: barriers, road connectivity and circuitous routes matter. Demand can represent people, establishments, settlements, observations or other weighted locations.
 
 The original single-facility solvers remain available unchanged. The adaptive workflow adds grouped demand, continuous edge attachment, multiple medians, automatic site counts, explicit disconnected-component policies and assignment diagnostics.
