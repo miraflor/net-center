@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "net-center"
 version = "0.2.0"
-description = "Exact absolute 1-center and weighted 1-median tools for undirected road networks"
+description = "Network location optimization and adaptive spatial representation on undirected spatial networks"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["gis", "road-network", "facility-location", "1-center", "1-median"]
+keywords = ["gis", "road-network", "facility-location", "1-center", "1-median", "k-median", "k-medoids", "spatial-representation"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3",

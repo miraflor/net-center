@@ -1,126 +1,48 @@
 # Network assumptions
 
-These assumptions matter more than any command-line switch. Read them before
-applying `net-center` to a new road dataset.
+These assumptions are part of the model, not merely command-line settings.
 
-## 1. The graph is undirected
+## Shared network model
 
-Every retained road segment can be traversed in both directions. One-way roads,
-turn restrictions, and asymmetric travel costs are not represented.
+- Undirected, positive-length edges. One-way roads, turn restrictions, asymmetric or time-dependent costs and weighted minimax are not represented.
+- Geometry is not connectivity. By default, shared source vertices recover junctions (including endpoint/interior and self-touching cases); mere 2-D crossings do not connect. `split_shared_vertices=False` / `--no-shared-vertex-noding` assumes already segmented topology. `node=True` / `--node-crossings` explicitly planarizes crossings and is unsafe for overpasses.
+- The graph builder does not inspect OSM bridge, tunnel, layer, access or turn attributes. Prepare routing-quality input; a shared coordinate is evidence, not proof of a turn.
+- Distances in the GIS workflows are metres. Geographic/non-metre input is transformed to a suitable inferred local UTM CRS when possible; explicit target CRS must be projected and metre-based. Choose an appropriate projection for the study extent. Numerical callers supply consistent distance units.
+- Node identity tolerance (`snap`, default 0.1 m) is transitive. It is distinct from maximum demand connector distance. Nearby shape vertices on one line are not indiscriminately merged. Closed and nearly closed rings are split so they survive self-loop filtering. Choose tolerance above coordinate noise but well below the shortest real segment.
+- Parallel physical edges remain available for continuous attachment and location, while CSR retains the minimum routing weight for each pair. Adaptive geometry validation requires ordered endpoints, physical length consistency and verifiable transitive merges. Inconsistent geometry is rejected rather than silently reversed or repaired.
 
-## 2. Source topology is preferred over geometric appearance
+## Legacy versus adaptive demand model
 
-The default does **not** assume that every line crossing is a junction.
-Instead, it treats a coordinate already present in two or more distinct input
-LineStrings as a real shared vertex and splits participating lines there. It
-also splits a line where another line ends on it, and where a line ends on one
-of its own interior vertices (a loop, such as a cul-de-sac turning circle drawn
-as one line).
+| Aspect | `net-center` / `solve` GIS workflow | `python -m net_center.adaptive_cli` |
+|---|---|---|
+| Demand | Optional; points or polygon representative points, default every node | Required nonempty point layer |
+| Attachment | Nearest existing node | Nearest physical edge by default; `--snap-mode node` available |
+| Connector | Snap QA; not part of objective | Access always includes connector; objective optionally includes it |
+| Unattached rows | Warn and exclude beyond max snap | Fail by default; explicit audited exclusion available |
+| Network retention | Largest component by physical road length | All components by default |
+| Output | Single-center results, optional point file | Complete JSON with group-level results and row coverage |
 
-That recovers common OSM-style junctions while preserving grade separation when
-a bridge and the road below merely cross geometrically and do not share a source
-vertex.
+Finite edge-interior observations become vertices by splitting the original physical edges at accepted offsets. The continuous absolute 1-center can itself lie on an edge interior. Neither model integrates demand density continuously along an entire edge. Candidate point layers constrain facilities, not demand. Snapping to the closest edge can select a small isolated road; it does not imply that travel is possible to the rest of the graph.
 
-## 3. Three topology modes are available
+## Components and coverage
 
-### Default: shared-source-vertex noding
+The adaptive workflow exposes four explicit policies:
 
-```python
-build_network(...)
-```
+- `strict`: require all modeled demand to occupy one component; unused components do not matter.
+- `largest`: attach first and exclude demand outside the largest component (physical lengths in GIS, collapsed CSR weights unless physical metadata supplied in numerical calls).
+- `per_component`: one site per demand-bearing component, with a per-group global cap.
+- `allocate`: distribute a per-group budget over populated components, requiring one site in each. Applies to median allocation; general multi-site minimax is not implemented.
 
-Recommended for OSM-shaped or routing-quality linework. Real junctions already
-encoded as shared vertices are recovered, including cases where both ways
-continue through the junction.
+`--keep-largest-component` is a separate preprocessing option: remove small components before attaching points. It matches legacy network construction, but may enlarge connector distances and does not bypass `--max-snap`. No policy adds bridges or links to manufacture reachability. Exclusion changes the modeled demand denominator; inspect both row and mass coverage before comparing methods.
 
-### Strict endpoint-only mode
+All modeled rows require a finite assignment even when their weight is zero. Each modeled group must have positive mass. A zero-weight component in a positive-mass median group gets exactly one secondary minimax-access site, even if extra sites could lower maximum access without affecting the weighted objective. This is a modeling convention. Minimax remains unweighted; weights summarize access, not the radius.
 
-```python
-build_network(..., split_shared_vertices=False)
-```
+## Facility locations and distance assumptions
 
-Use only when the source is already split into separate segments at every true
-junction. This can be faster on already-normalized data, but it will miss
-interior shared vertices.
+The numerical finite-site domains are `vertices`, `demand`, and `restricted`. The GIS vertices domain includes original vertices and only that group's own accepted demand vertices. A shared routing graph does not imply a shared augmented candidate set. `continuous` is reserved for the GIS absolute 1-center objective. The exact and heuristic multi-median algorithms use the same finite candidate domain.
 
-CLI equivalent:
+Connector distances are fixed nonnegative offsets, not routing edges. They cannot affect the median site's optimal location for fixed modeled demand, but may affect minimax. Access budget always includes offsets. The GIS metric is physical length; arbitrary per-edge costs, boarding penalties, directed travel, off-network walking routes and continuous network demand require other models.
 
-```bash
-net-center roads.gpkg --no-shared-vertex-noding
-```
+## Practical checks
 
-### Full planar noding
-
-```python
-build_network(..., node=True)
-```
-
-This creates a junction at every 2-D crossing. Use only for genuinely planar
-linework where every crossing is connected.
-
-CLI equivalent:
-
-```bash
-net-center roads.gpkg --node-crossings
-```
-
-Do not use this blindly on bridges, tunnels, or grade-separated roads.
-
-## 4. A shared vertex is evidence, not an attribute model
-
-`net-center` does not inspect OSM `bridge`, `tunnel`, `layer`, turn-restriction,
-or one-way attributes. It only sees line geometry at graph-construction time.
-
-If the source contains a geometrically shared vertex that should *not* permit a
-turn, clean or separate that topology before building the network.
-
-## 5. Distances are metres
-
-Every solver result, edge length, snap distance, and offset `t` is interpreted
-as metres.
-
-- metre-based projected input is preserved;
-- geographic input is reprojected to an inferred local UTM CRS;
-- non-metre projected input is converted when possible;
-- an explicit `target_crs` must be projected and metre-based.
-
-For a very large study area, choose a projection suitable for the full extent
-instead of relying on one inferred UTM zone.
-
-## 6. Demand is snapped to network nodes
-
-Demand is not projected to an arbitrary point along the nearest edge. On a
-heavily simplified network, the nearest junction can be much farther away than
-the nearest road itself.
-
-Always inspect snap distances. In production work, set a defensible
-`--max-snap` threshold.
-
-## 7. Only one connected component is retained by default
-
-The component with the greatest total road length is kept. This avoids infinite
-shortest-path distances between disconnected pieces.
-
-If disconnected components are substantively meaningful, solve them separately
-rather than interpreting unreachable travel as one facility-location problem.
-
-## 8. Demand is vertex demand
-
-The centre objective is the maximum distance to the chosen demand nodes. It is
-not the continuous-network centre in which every point on every road is itself
-a demand location.
-
-## 9. Coordinates within the snap distance are one location
-
-Two coordinates closer than `snap` metres (default `0.1`) are one network
-location, and the rule is transitive: if A is within `snap` of B, and B within
-`snap` of C, then A, B, and C are one location even when A and C are farther
-apart. The same rule decides node identity, which source vertices are shared
-junctions, and whether a line is a ring.
-
-- A road segment shorter than `snap` collapses into one node.
-- Within one line, two vertices are linked only when one of them is an endpoint
-  and the line travels more than `snap` between them, so a densely digitised
-  road is not collapsed.
-- Choose `snap` above the coordinate noise of the data and well below the
-  shortest real road segment.
+Use a defensible maximum snap distance, inspect attachment and excluded-row diagnostics, verify physical topology and CRS, and choose candidate and component policies before interpreting the objective. Gap reference vertices are a modeling choice affected by vertex density and study extent. No guarantee is made that the nearest Euclidean attachment is the appropriate real-world access point. See [adaptive guide](ADAPTIVE_LOCATION.md) and [validation](VALIDATION.md).

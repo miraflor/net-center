@@ -1,740 +1,233 @@
 # net-center
 
-**Exact 1-median and 1-center location on undirected spatial networks.**
+**Network location optimization and adaptive spatial representation.**
 
-`net-center` is a Python package and command-line tool for solving classical **network location problems** on road and other line-based transport networks.
+`net-center` is a Python library and command-line toolkit for locating facilities or representative sites on undirected spatial networks. It uses shortest-path distance rather than straight-line distance: barriers, road connectivity and circuitous routes matter. Demand can represent people, establishments, settlements, observations or other weighted locations.
 
-Given a network and an optional set of demand locations, it computes:
+The original single-facility solvers remain available unchanged. The adaptive workflow adds grouped demand, continuous edge attachment, multiple medians, automatic site counts, explicit disconnected-component policies and assignment diagnostics.
 
-| Result | Objective | Candidate location |
+## Capabilities and guarantees
+
+| Problem | Eligible locations | Guarantee |
 |---|---|---|
-| **Weighted 1-median** | Minimize total weighted shortest-path distance | Network nodes |
-| **Vertex 1-center** | Minimize maximum shortest-path distance | Network nodes |
-| **Absolute 1-center** | Minimize maximum shortest-path distance | Anywhere on the network |
+| Weighted 1-median | Network vertices, demand vertices or restricted candidates | Exact for the specified finite candidate set |
+| Vertex 1-center | Eligible network vertices | Exact minimax, unweighted |
+| Absolute 1-center | Anywhere along physical network edges | Exact up to numerical tolerance |
+| Weighted network k-median | Network vertices or restricted candidates | BUILD/SWAP heuristic; bounded exhaustive enumeration for small cases |
+| Weighted network k-medoids | Distinct demand vertices | Same finite-candidate algorithms |
+| Component allocation | Evaluated component site-count curves | Exact dynamic programming over those curves |
+| Adaptive representation | Evaluated solutions | Explicit selection criterion, not a universal optimality claim |
 
-Unlike an ordinary geographic centroid, `net-center` measures distance **through the network**. Barriers, bridges, ferry links, circuitous roads, and network topology therefore affect the solution.
+The absolute-center wrapper solves one continuous minimax location per group or populated component, not a general continuous k-center problem. Exactness is relative to the supplied network, candidate universe, modeled demand and floating-point tolerance.
 
-The package is domain-neutral: demand locations can represent people, establishments, customers, facilities, settlements, observations, or any other points for which network distance matters.
+## Install
 
----
-
-## Why network centers?
-
-A coordinate centroid answers a geometric question. It does not necessarily answer an accessibility question.
-
-Two locations may be close in straight-line distance but far apart through a road network because of rivers, coastlines, mountains, limited crossings, disconnected streets, or other topological constraints.
-
-`net-center` instead solves location problems using the shortest-path metric $`d_G`$ induced by the network.
-
-### Weighted 1-median
-
-For demand locations $`i=1,\dots,k`$, non-negative weights $`w_i`$, and a candidate location $`x`$,
-
-```math
-x^* = \arg\min_x \sum_{i=1}^{k} w_i d_G(x,i).
-```
-
-This is the **minisum** objective: find the location minimizing aggregate weighted travel distance.
-
-For vertex demand on a network, a median optimum can be chosen at a network vertex. `net-center` therefore solves this problem over network nodes.
-
-### Vertex 1-center
-
-```math
-x^* = \arg\min_{x\in V} \max_i d_G(x,i).
-```
-
-This is the **minimax** objective restricted to network vertices. It minimizes the distance to the farthest demand location.
-
-### Absolute 1-center
-
-```math
-x^* = \arg\min_{x\in G} \max_i d_G(x,i).
-```
-
-Here the candidate location may lie **anywhere on the network**, including in the interior of an edge.
-
-This distinction matters: the true minimax solution need not coincide with a junction.
-
----
-
-## Literature and algorithmic lineage
-
-`net-center` implements classical network-location problems rather than proposing a new facility-location algorithm.
-
-The mathematical core follows the literature beginning with:
-
-- **Hakimi, S. L. (1964).** “Optimum Locations of Switching Centers and the Absolute Centers and Medians of a Graph.” *Operations Research*, 12(3), 450–459.  
-  https://doi.org/10.1287/opre.12.3.450
-
-  Hakimi introduced the absolute center and absolute median framework for weighted graphs and established the central distinction used by `net-center`: median optima may be taken at vertices, while absolute-center optima can lie inside edges.
-
-- **Kariv, O., & Hakimi, S. L. (1979).** “An Algorithmic Approach to Network Location Problems. I: The p-Centers.” *SIAM Journal on Applied Mathematics*, 37(3), 513–538.  
-  https://doi.org/10.1137/0137040
-
-  This is the principal algorithmic reference for the continuous absolute-center problem. `net-center` uses the classical edgewise distance structure and breakpoint decomposition underlying absolute-center algorithms, while implementing the computation with vectorized prefix/suffix envelope evaluation and additional engineering optimizations.
-
-- **Handler, G. Y., & Mirchandani, P. B. (1979).** *Location on Networks: Theory and Algorithms*. MIT Press.  
-  https://mitpress.mit.edu/9780262080903/location-on-networks/
-
-  A systematic treatment of network median and center problems and the classical edgewise formulation used in the package.
-
-- **Hakimi, S. L. (1965).** “Optimum Distribution of Switching Centers in a Communication Network and Some Related Graph Theoretic Problems.” *Operations Research*, 13(3), 462–475.  
-  https://doi.org/10.1287/opre.13.3.462
-
-  Extends the network-location framework to the $`p`$-median problem. `net-center` currently solves only $`p=1`$.
-
-- **Daskin, M. S. (2013).** *Network and Discrete Location: Models, Algorithms, and Applications*, 2nd ed. Wiley.  
-  https://doi.org/10.1002/9781118537015
-
-  A modern treatment of facility-location models, including the distinction between vertex and absolute center problems.
-
-The implementation should therefore be described as a **computational implementation of classical network-location theory**, with package-specific work concentrated in GIS topology construction, numerical safeguards, vectorization, memory management, pruning, and parallel execution.
-
-See `docs/ALGORITHMS.md` and `docs/TECHNICAL_NOTE.tex` for the detailed derivation and implementation audit.
-
-### Provenance of each implementation step
-
-| Step in `net-center` | Source | Relation to the source |
-|---|---|---|
-| Shortest-path distance matrix | Dijkstra (1959), computed with SciPy (Virtanen et al., 2020) | Published algorithm, library implementation. |
-| Weighted 1-median over network nodes | Hakimi (1964): for vertex demand, a median optimum can be taken at a vertex | Direct implementation: a weighted sum over the distance matrix, then `argmin`. |
-| Vertex 1-center | The node-restricted form of the minimax problem of Hakimi (1964) | Direct implementation: a row maximum over the distance matrix, then `argmin`. |
-| Absolute 1-center: tent functions, sorted breakpoints, analytic minimum on each interval | Hakimi (1964); Kariv and Hakimi (1979, part I); textbook form in Handler and Mirchandani (1979) and Daskin (2013) | The interval decomposition is the published one. Evaluating it with vectorized prefix and suffix running maxima over many edges at once is an implementation choice (`docs/ALGORITHMS.md`). |
-| Edge pruning with the two bounds in [Edge pruning](#edge-pruning) | Derived in that section from the triangle inequality and the edge distance formula | No published source is claimed. The bounds only discard edges that cannot improve on the best vertex center, so the optimum does not change, and the test suite checks the bounds against a sweep of every edge. |
-| Demand snapped to the nearest node; duplicate demand coalesced | Modeling choice stated in [Demand semantics](#demand-semantics) | Not a location algorithm. Coalescing is exact: weights are summed for the median, and repetition does not change a maximum. |
-| Road topology: shared-source-vertex noding and optional planar noding | GIS preprocessing. Planar noding uses GEOS through Shapely; `docs/ALGORITHMS.md` discusses its algorithmic background, including Bentley and Ottmann (1979) | Not a location algorithm. `docs/ALGORITHMS.md` states that no novelty is claimed for the shared-vertex rule. |
-| Blocked computation, float32 storage and parallel execution | Engineering | These change memory use and speed, not the objective (see [Memory controls](#memory-controls)). |
-
-In summary, the location methods are published, and the package-specific parts are engineering steps and the pruning bounds. None of them changes the optimization objective. The section on AI-assisted implementation work in `docs/ALGORITHMS.md` lists these parts in more detail.
-
----
-
-## Installation
-
-### Full GIS installation
+From a clone of the repository:
 
 ```bash
-python -m pip install -e ".[gis]"
+python -m pip install -e .          # numerical core: NumPy, SciPy, Joblib
+python -m pip install -e ".[gis]"    # optional GIS tools
+python -m pip install -e ".[dev]"    # development and tests
 ```
 
-### Development installation
+Python 3.10–3.13 are tested in CI. GIS workflows require Shapely, GeoPandas and PyProj. The core numerical API does not require the GIS extras. The distribution is `net-center`, import package `net_center`, and installed console command `net-center`.
 
-```bash
-python -m pip install -e ".[dev]"
-python -m pytest -q
-```
+## Quick start: exact single-center location
 
-### Numerical core only
-
-If you already have a sparse graph and do not need GeoPandas/Shapely file I/O:
-
-```bash
-python -m pip install -e .
-```
-
----
-
-## Quick start
-
-The simplest command is:
+The original command computes the weighted 1-median, vertex center and absolute center (default demand is every network node).
 
 ```bash
 net-center roads.gpkg
+net-center roads.gpkg --demand points.gpkg --weight-field population \
+  --max-snap 500 --out centers.gpkg
 ```
 
-With explicit demand locations and weights:
-
-```bash
-net-center roads.gpkg \
-  --layer roads \
-  --demand demand.gpkg \
-  --weight-field weight \
-  --max-snap 1000 \
-  --out centers.gpkg
-```
-
-This computes the weighted 1-median, vertex 1-center, and absolute 1-center.
-
-If no demand layer is supplied, every network node is used as a demand location.
-
----
-
-## Python API
+Use `net-center --help` for topology, parallel execution and memory options. This workflow attaches demand to the nearest existing node, retains the largest road-length component, accepts point or polygon representative-point demand, and may exclude rows beyond the snap threshold with warnings. Connector distances are not part of its objective.
 
 ```python
 from net_center import build_network, snap_points, solve
 
 net = build_network("roads.gpkg")
-
-# Coordinates must be in net.crs.
-demand_xy = [
-    [305000.0, 1615000.0],
-    [306250.0, 1616200.0],
-]
-
-nodes, snap_distance = snap_points(
-    net,
-    demand_xy,
-    max_dist=1000,
-)
-
-results = solve(
-    net,
-    demand_nodes=nodes,
-    weights=[1200, 800],
-)
-
-print(results["median"])
-print(results["vertex_center"])
-print(results["absolute_center"])
+# Coordinates must already be in net.crs (metres).
+nodes, distances = snap_points(net, [[305100, 1615000], [305250, 1615200]], max_dist=500)
+if (nodes < 0).any():
+    raise ValueError("Unattached demand")
+results = solve(net, demand_nodes=nodes, weights=[1200, 800])
+print(results["median"], results["absolute_center"])
 ```
 
-The absolute-center result is either a network node or an edge plus an offset `t` in metres. `solve()` attaches the corresponding map coordinate in `.xy`.
+See [the single-center algorithm guide](docs/ALGORITHMS.md) and [the original quickstart](examples/quickstart.py).
 
----
+## Quick start: adaptive network location
 
-## Demand semantics
-
-Demand is represented internally at **network nodes**.
-
-When a GIS demand layer is supplied:
-
-1. empty geometries are removed;
-2. point geometries are used directly;
-3. non-point geometries are converted to representative points;
-4. coordinates are transformed to the network CRS;
-5. each point is snapped to its nearest network node.
-
-This is an explicit modeling choice. Demand is **not** currently placed continuously along edges.
-
-### Repeated demand locations
-
-Several demand observations may snap to the same node.
-
-`net-center` coalesces them exactly:
-
-- for the median, supplied weights or observation counts are summed;
-- for the center, duplicate copies are irrelevant because repetition does not change a maximum.
-
-This can substantially reduce shortest-path work.
-
-### Snap-distance control
-
-Use:
+Use the separate module CLI (no new console entry point is installed). Input is a prepared line network and a nonempty point demand layer with a declared CRS. Output is a new JSON file; existing output paths are refused.
 
 ```bash
---max-snap 1000
+# Independent demand groups, choose representative medoids automatically.
+python -m net_center.adaptive_cli roads.gpkg --demand points.gpkg \
+  --weight-field population --group-by region --max-snap 500 \
+  --selection balanced --candidate-domain demand \
+  --component-policy allocate --max-centers 12 --out representatives.json
+
+# Fixed k, bounded exact reference calculation on small instances.
+python -m net_center.adaptive_cli roads.gpkg --demand points.gpkg \
+  --candidate-domain demand --k 2 --algorithm exact \
+  --max-combinations 100000 --out exact.json
+
+# Exact continuous minimax center per populated component.
+python -m net_center.adaptive_cli roads.gpkg --demand points.gpkg \
+  --objective absolute_center --include-offsets \
+  --component-policy per_component --out continuous.json
 ```
 
-to reject demand points farther than the specified distance from the nearest network node.
+Run `python -m net_center.adaptive_cli --help` for all options. For a legacy-equivalent network and node attachment, use `--snap-mode node --keep-largest-component`; compare the same demand rows, weights, thresholds and candidate domain, and do not include connectors in the objective. The legacy and adaptive outputs have different formats and exclusion defaults.
 
-If no maximum is supplied, points are still snapped, but large snap distances should be inspected carefully, especially on simplified road networks.
+### Numerical Python API
 
----
+The adaptive API is available from its submodules, not as new top-level exports. For example, a four-node path with weighted demand at its ends:
 
-## Road-network topology
+```python
+from scipy.sparse import csr_matrix
+from net_center.adaptive import solve_adaptive
 
-Correct topology is critical.
-
-A geometric crossing does not necessarily imply a valid turn. A bridge, tunnel, or flyover may cross another road in two dimensions without connecting to it.
-
-`net-center` therefore distinguishes three topology modes.
-
-### Default: shared-source-vertex noding
-
-```bash
-net-center roads.gpkg
+G = csr_matrix([[0., 10., 0., 0.], [10., 0., 10., 0.],
+                [0., 10., 0., 10.], [0., 0., 10., 0.]])
+r = solve_adaptive(G, [0, 3], weights=[2., 1.],
+                   candidate_domain="demand", k=2, algorithm="exact")
+print(r.centers, r.site_weight, r.mean_access)
 ```
 
-If two input LineStrings already contain the same source vertex, or a line ends on a vertex of another line or of itself, that location is treated as a genuine junction and the lines are split there. The second case covers a line that ends on one of its own interior vertices, such as a cul-de-sac turning loop drawn as one line.
+Use `solve_groups` for independent groups with a shared graph; pass `base_vertex_count` for group-specific original-plus-own-demand vertex candidates. Use `net_center.edge_snap.snap_to_edges` and `augment_network` to attach points to physical edges, and `net_center.absolute_groups.solve_absolute_groups` for continuous minimax. See [adaptive API and CLI details](docs/ADAPTIVE_LOCATION.md), [numerical example](examples/adaptive_quickstart.py) and [GIS example](examples/adaptive_gis.py).
 
-This recovers common T- and X-junctions already encoded by the source data without automatically connecting every geometric crossing.
+## Mathematical objectives
 
-### Strict endpoint-only mode
+Let $d_G(q,s)$ be shortest-path distance, $w_i \ge 0$ demand weight, $q_i$ an attached demand vertex, and $S$ a set of eligible sites.
 
-```bash
-net-center roads.gpkg --no-shared-vertex-noding
-```
-
-Use this only if the input is already segmented at every true junction.
-
-### Explicit planar noding
-
-```bash
-net-center roads.gpkg --node-crossings
-```
-
-This treats every geometric crossing as connected.
-
-Use it only for genuinely planar networks. On ordinary road data it can incorrectly connect a bridge to the road beneath it.
-
-### Node identity (`--snap`)
-
-Coordinates closer than `--snap` metres (default `0.1`) are treated as one network location, and the rule is applied transitively. The same rule decides node identity, which source vertices are shared junctions, and whether a line is a ring. A line whose two ends are one location (a closed or nearly closed ring) is split into two halves, so that it is not deleted as a self-loop. Within one line, nearby vertices are linked only when one of them is an endpoint and the line travels more than `--snap` metres between them, so a densely digitised road is not merged into one location.
-
----
-
-## Coordinate systems and units
-
-All reported network distances, edge lengths, offsets, and snapping distances are in **metres**.
-
-- projected metre-based input is preserved;
-- geographic input is reprojected to an inferred local UTM CRS unless a target CRS is supplied;
-- projected input using non-metre units is reprojected;
-- an explicit target CRS must be projected and metre-based.
-
-For large or multi-zone study areas, supply a projection appropriate to the full study area rather than relying on an automatically inferred UTM zone.
-
----
-
-## Shortest-path distance matrix
-
-Let:
-
-- $`k`$ = number of unique demand nodes,
-- $`n`$ = number of network nodes.
-
-`net-center` computes
+**Weighted network median:** minimize
 
 ```math
-D_{ij}=d_G(q_i,v_j),
+J(S)=\sum_i w_i\min_{s\in S}d_G(q_i,s).
 ```
 
-giving a demand-by-node matrix
+For one site on a connected component, an optimum over a finite candidate set is found exactly. With unrestricted network vertices, classical vertex optimality for the median applies to vertex demand. Multiple finite-candidate sites use greedy BUILD and bounded best-improving SWAP by default; bounded exact enumeration is available with `algorithm="exact"`. The heuristic is not guaranteed globally optimal.
+
+**Vertex minimax:** minimize $\max_i d_G(q_i,s)$ over eligible vertices. **Absolute minimax:** minimize the same maximum over any point of a network edge. On an edge of length $L$ with endpoints $u,v$, a demand's distance to offset $t$ is
 
 ```math
-D\in\mathbb{R}^{k\times n}.
+\min\{d_G(q_i,u)+t,\ d_G(q_i,v)+L-t\}.
 ```
 
-Distances are computed using Dijkstra's shortest-path algorithm through SciPy.
+The exact edge sweep finds the minimum of the upper envelope using sorted breakpoints, prefix/suffix maxima and safe lower bounds. Demand is finite, not distributed continuously along the entire network. Adaptive edge attachment inserts the finite interior demand positions as vertices.
 
-This matrix is then reused by the location solvers.
+**Connectors:** the adaptive workflow records each observation's Euclidean attachment offset $a_i$. Access is $a_i+\min_s d_G(q_i,s)$. For medians, $\sum_i w_i a_i$ is constant for a fixed modeled demand set; `include_offsets=True` adds it to the reported objective. For minimax, offsets may change the optimal location, and enter the objective only when explicitly enabled. Access diagnostics and the access-budget criterion always include them. Demand weights do not weight minimax radii; zero-weight rows still count for minimax and coverage.
 
----
+## Candidate domains and grouping
 
-## Weighted 1-median implementation
+| Domain | Meaning |
+|---|---|
+| `vertices` | All supplied vertices in the numerical API; original plus each group's own inserted demand vertices in the GIS CLI |
+| `demand` | Distinct observed attached demand vertices (medoids) |
+| `restricted` | Explicit candidate node IDs or snapped candidate point layer |
+| `continuous` | Absolute 1-center GIS objective only |
 
-For each candidate node $`j`$,
+Group labels identify independent problems. Site budgets apply per group, not across groups. Other groups' inserted vertices may be used for routing but are not automatically eligible facilities. Candidate points are not extra demand. The solver validates finite input, candidate reachability, positive modeled group mass and memory limits.
 
-```math
-M_j=\sum_i w_iD_{ij}.
-```
+## Demand attachment, topology and components
 
-The solution is
+Both workflows use undirected positive-length networks and projected metre units. Input topology is preferred over geometric crossings; planar noding is opt-in. One-way streets, turn restrictions and arbitrary travel costs are not modeled. See [network assumptions](docs/NETWORK_ASSUMPTIONS.md).
 
-```math
-j^*=\arg\min_j M_j.
-```
+| Behavior | Original CLI | Adaptive CLI |
+|---|---|---|
+| Default attachment | Nearest existing node | Nearest physical edge, split at accepted interior positions |
+| Input demand | Optional point/polygon layer | Required point layer |
+| Network retention | Largest road-length component | All components unless `--keep-largest-component` |
+| Unsnapped rows | Exclude with warning | Error unless `--on-unsnapped exclude` |
+| Output | Three single-center results, optional GIS output | Complete group/assignment JSON |
 
-In the implementation this is a weighted reduction over the shortest-path matrix followed by `argmin`.
+The adaptive component policies are `strict` (one populated component), `largest` (exclude rows outside the largest component after snapping), `per_component` (fixed one site per populated component), and `allocate` (global site budget per group, at least one site per populated component). In GIS, largest means original physical road length; CSR-only numerical calls default to collapsed routing edge weights. `--keep-largest-component` filters the graph before snapping and can increase connector distances. It is not equivalent to post-snap exclusion. No links are invented.
 
-When explicit weights are absent, every demand observation has unit weight.
+In a positive-mass median group, an entirely zero-weight component receives exactly one site chosen by secondary minimax access; this is a coverage convention, not a weighted-median theorem. A fixed-k request may consequently be infeasible. All-zero modeled groups fail.
 
----
+## Selecting the number of sites
 
-## Vertex 1-center implementation
+| Selection | Criterion |
+|---|---|
+| `fixed` | Specified k (default 1) |
+| `balanced` | Network loss relative to the one-per-component baseline plus a normalized site-count penalty |
+| `access_budget` | Smallest evaluated site count satisfying weighted mean access, including connectors |
+| `penalized` | Network loss plus user-defined facility cost times k |
+| `gap` | One-standard-error Gap rule with a network-medoid reference model |
 
-For each candidate node $`j`$,
+For adaptive policies pass `k=None` in Python and omit `--k` on the CLI. These are median policies; vertex and absolute minimax support fixed one-site subproblems only. Gap requires demand candidates and heuristic curves. It uses **unsquared** weighted network-medoid loss, draws from component vertices (not uniform network length), preserves row weights and records the reference support and outcomes. The cap and admissibility checks may prevent a split. See [the full mathematical and parameter description](docs/ADAPTIVE_LOCATION.md). Failure under an access budget means no evaluated solution met it, not a proof of global infeasibility.
 
-```math
-E_j=\max_iD_{ij}.
-```
+## Results and diagnostics
 
-The vertex center is
+The adaptive JSON schema `net-center-adaptive/5` records center locations, source row indices, assignments, coverage and exclusions, site weights/counts, mean and maximum access, weighted P50/P90/P95/P99, evaluated cost curves and selection diagnostics. Assignments index the group's center list; unavailable/nonfinite values become JSON null. Excluded and unsnapped rows are identified. Weighted percentiles use modeled positive mass; maximum access includes zero-weight rows. `settings` is invocation configuration, `diagnostics.configured_options` resolves tuning defaults for finite-site objectives, and `diagnostics.execution_by_component` records observed solver paths and Gap replicates. The continuous wrapper has separate diagnostics. Output is published only after all groups succeed and requires hard-link support for no-clobber publication.
 
-```math
-j^*=\arg\min_j E_j.
-```
+## Performance and limitations
 
-This is the node-restricted minimax solution.
+- The original solvers construct a demand-by-node matrix; `--float32`, `--max-temp-mb`, `--max-cells`, `--jobs` and `--backend` are legacy controls. Absolute edge sweeps use safe pruning. See [algorithms](docs/ALGORITHMS.md).
+- Adaptive single-site median and vertex minimax use streaming shortest paths; median pruning uses a triangle-inequality bound. `--max-temp-mb` targets routing blocks, not total RSS. Multi-site curves retain a dense unique-demand-by-candidate matrix within `--max-matrix-mb`; exhaustive enumeration has a combinatorial gate. No adaptive national-scale performance guarantee is claimed.
+- Not implemented: directed/asymmetric/time-dependent costs, turn restrictions, general weighted or multi-facility minimax, continuous demand density along roads, capacities, out-of-core distance matrices, automatic OSM acquisition, or arbitrary multimodal cost models. The GIS solver uses positive physical lengths in metres. No network barycenter or squared-distance Fréchet mean solver is provided.
 
----
+## Documentation and architecture
 
-## Exact absolute 1-center
-
-Consider an edge $`(u,w)`$ of length $`L`$, and let $`t\in[0,L]`$ denote distance from endpoint $`u`$.
-
-For demand node $`v`$,
-
-```math
-d(t,v)
-=
-\min\left\{
-d(u,v)+t,\;
-d(w,v)+L-t
-\right\}.
-```
-
-Each demand therefore contributes a piecewise-linear "tent" function along the edge.
-
-The edge eccentricity is
-
-```math
-E(t)=\max_v d(t,v).
-```
-
-The route for a demand switches between the two edge endpoints at
-
-```math
-t_v^*
-=
-\frac{d(w,v)-d(u,v)+L}{2}.
-```
-
-Sorting these breakpoints partitions the edge into intervals in which the upper envelope reduces to
-
-```math
-E(t)=\max\{A+t,\;B+L-t\},
-```
-
-where $`A`$ and $`B`$ are fixed on the interval.
-
-The minimum on each interval is therefore analytic. `net-center` evaluates the necessary prefix/suffix maxima and selects the best candidate.
-
-This is an exact continuous-edge solution for the stored shortest-path metric, modulo floating-point precision and the configured numerical tolerance.
-
----
-
-## Edge pruning
-
-Sweeping every edge is unnecessary.
-
-The best vertex center first supplies an incumbent radius:
-
-```math
-R_V=\min_j\max_iD_{ij}.
-```
-
-Two lower bounds on the eccentricity anywhere on edge $`(u,w)`$ of length $`L`$ are then used, cheapest first. The first needs only the vertex eccentricities $`E(v)=\max_iD_{iv}`$, which are already known, and costs one operation per edge:
-
-```math
-LB'_e
-=
-\tfrac12\bigl(E(u)+E(w)-L\bigr).
-```
-
-It follows from the triangle inequality: a point at distance $`t`$ from $`u`$ has eccentricity at least $`E(u)-t`$ and at least $`E(w)-(L-t)`$, and the larger of the two is never below $`LB'_e`$. The second bound costs $`k`$ operations per edge and is evaluated only for edges that pass the first:
-
-```math
-LB_e
-=
-\max_i \min\{D_{iu},D_{iw}\}.
-```
-
-If either bound cannot improve the incumbent, the edge is discarded before the more expensive breakpoint sweep.
-
-This is an implementation acceleration; it does not change the optimization objective.
-
----
-
-## Performance and memory
-
-For $`k`$ unique demand nodes and $`n`$ network nodes, the stored shortest-path matrix requires approximately:
+| Resource | Scope |
+|---|---|
+| [Adaptive location](docs/ADAPTIVE_LOCATION.md) | Detailed API, selection, safeguards, output schema and examples |
+| [Algorithms](docs/ALGORITHMS.md) | Original mathematical derivations plus adaptive methods |
+| [Architecture](docs/ARCHITECTURE.md) | Both execution paths and module boundaries |
+| [Network assumptions](docs/NETWORK_ASSUMPTIONS.md) | Topology, units, demand and component semantics |
+| [Technical note (PDF)](docs/TECHNICAL_NOTE.pdf) · [LaTeX source](docs/TECHNICAL_NOTE.tex) | Unified scientific treatment |
+| [Validation](docs/VALIDATION.md) | Tests, CI, numerical limits and reproducibility |
+| [Review notes](docs/REVIEW_NOTES.md) | Historical review of the first public release |
+| [Changelog](CHANGELOG.md) | Release history and unreleased expansion |
+| [Development guide](GITHUB_SETUP.md) | Safe contribution and release workflow |
 
 ```text
-float64: 8 × k × n bytes
-float32: 4 × k × n bytes
+net_center/                 numerical and GIS implementation
+  center.py, solve.py       original exact single-center solvers
+  distances.py, topology.py sparse routing and adjacency
+  graph.py, cli.py          original GIS network and CLI
+  adaptive.py              grouped finite-candidate location and selection
+  edge_snap.py             nearest-edge attachment and augmentation
+  absolute_groups.py       grouped continuous minimax wrapper
+  adaptive_cli.py          adaptive GIS workflow and JSON publication
+examples/                   single-center, adaptive numerical and GIS examples
+tests/                      original and adaptive regression suites
+docs/                       technical and user documentation
+.github/workflows/ci.yml    cross-version CI and installed-wheel smoke tests
 ```
 
-Example:
-
-```text
-2,000 demand nodes × 12,000 network nodes
-```
-
-is approximately:
-
-```text
-float64: 183 MiB
-float32:  92 MiB
-```
-
-Use:
-
-```bash
-net-center roads.gpkg --float32
-```
-
-to roughly halve matrix storage.
-
-The solver uses a scale-aware numerical margin so float32 rounding cannot incorrectly prune a borderline edge, but the final result remains limited by the precision of the stored matrix.
-
-Median sums are accumulated in float64 even with `--float32`, and the weighted median reads the matrix in bounded blocks, so `--float32` does not create a hidden full-size float64 copy.
-
----
-
-## Parallel execution
-
-The conservative default is one worker:
-
-```bash
-net-center roads.gpkg
-```
-
-For larger problems:
-
-```bash
-net-center roads.gpkg --jobs 4 --backend loky
-```
-
-or:
-
-```bash
-net-center roads.gpkg --jobs 4 --backend threading
-```
-
-`loky` uses processes; `threading` uses shared-memory threads. With more than one worker, the shortest-path sources are split into at least as many blocks as there are workers.
-
-Performance depends on graph size, demand count, SciPy build, operating system, memory bandwidth, and available RAM. Benchmark the actual workload rather than assuming that more workers are always faster.
-
----
-
-## Memory controls
-
-Shortest-path calculations are performed in bounded source blocks.
-
-```bash
---max-temp-mb
-```
-
-controls the target float64 Dijkstra result size of one block per worker.
-
-The absolute-center sweep is likewise blocked:
-
-```bash
---max-cells
-```
-
-controls the maximum number of segment-demand cells handled at once.
-
-These settings change memory use, not the mathematical objective.
-
----
-
-## Output
-
-Console output reports each solved location with:
-
-- objective value;
-- node or edge identifier;
-- edge offset when applicable;
-- map coordinates.
-
-For the median, the CLI also reports the mean weighted network distance.
-
-Spatial output can be written with:
-
-```bash
-net-center roads.gpkg \
-  --demand demand.gpkg \
-  --out centers.gpkg
-```
-
-The output includes:
-
-- `kind`
-- `objective`
-- `node`
-- `edge`
-- `t_m`
-- geometry
-
----
-
-## Disconnected networks
-
-All selected demand locations must be reachable through the analyzed network.
-
-If the shortest-path matrix contains infinite distances, `net-center` fails rather than returning a plausible but mathematically meaningless center.
-
-Depending on the application, repair the topology, restrict the study to a connected component, or solve components separately.
-
----
-
-## What `net-center` does not currently implement
-
-The current package is deliberately narrower than the full network-location literature.
-
-Not implemented:
-
-- directed networks;
-- one-way streets;
-- turn restrictions;
-- asymmetric travel costs;
-- time-dependent costs;
-- congestion-dependent travel time;
-- weighted minimax centers;
-- demand located continuously along edges;
-- $`p>1`$ center or median problems;
-- automatic inference of bridge/tunnel connectivity from attributes;
-- out-of-core storage for distance matrices too large for RAM.
-
----
-
-## Network median versus geographic centroid
-
-The weighted network median is **not** an arithmetic centroid.
-
-A weighted Euclidean centroid minimizes squared Euclidean distance and can be written
-
-```math
-\bar{x}
-=
-\frac{\sum_i w_ix_i}{\sum_iw_i}.
-```
-
-The network median instead minimizes
-
-```math
-\sum_i w_id_G(x,i).
-```
-
-It is therefore better interpreted as a **network-accessibility center under a minisum objective** than as a literal coordinate centroid.
-
-A closer network analogue to a Euclidean centroid would be a network Fréchet mean or barycenter,
-
-```math
-x^*
-=
-\arg\min_{x\in G}
-\sum_iw_i d_G(x,i)^2,
-```
-
-which is **not currently implemented**.
-
----
-
-## Choosing an objective
-
-Use the **weighted 1-median** when the goal is to minimize aggregate weighted network distance.
-
-Use the **vertex 1-center** when the worst-served demand matters and the facility must coincide with an existing network node.
-
-Use the **absolute 1-center** when the worst-served demand matters and the facility may be located anywhere along the network.
-
-There is no universal definition of "the center" of a network. The appropriate objective depends on the application.
-
----
-
-## Repository map
-
-```text
-net-center/
-├─ .github/
-│  └─ workflows/
-│     └─ ci.yml
-├─ docs/
-│  ├─ ALGORITHMS.md
-│  ├─ ARCHITECTURE.md
-│  ├─ NETWORK_ASSUMPTIONS.md
-│  ├─ REVIEW_NOTES.md
-│  ├─ TECHNICAL_NOTE.tex
-│  ├─ TECHNICAL_NOTE.pdf
-│  └─ VALIDATION.md
-├─ examples/
-│  └─ quickstart.py
-├─ net_center/
-│  ├─ __init__.py
-│  ├─ _checks.py
-│  ├─ center.py
-│  ├─ cli.py
-│  ├─ distances.py
-│  ├─ graph.py
-│  ├─ solve.py
-│  └─ topology.py
-├─ tests/
-│  ├─ test_center.py
-│  ├─ test_cli.py
-│  ├─ test_distances.py
-│  ├─ test_graph.py
-│  ├─ test_package.py
-│  └─ test_solve.py
-├─ .gitignore
-├─ CHANGELOG.md
-├─ GITHUB_SETUP.md
-├─ LICENSE
-├─ README.md
-└─ pyproject.toml
-```
-
-For understanding the implementation, read approximately in this order:
-
-```text
-solve.py
-  ↓
-center.py
-  ↓
-distances.py
-  ↓
-graph.py
-  ↓
-topology.py
-```
-
----
+The earlier detailed single-center README and technical note remain available in the [historical revision](https://github.com/miraflor/net-center/tree/df24244e81e17b79e497b979fb3773382c87fed7); the current guide scopes those methods without discarding their derivations in `ALGORITHMS.md`.
 
 ## Validation
 
-The test suite includes:
-
-- analytically checkable median and center cases;
-- continuous edge-interior center cases;
-- random-network comparison with independent brute-force edge sampling;
-- serial/parallel invariance;
-- block-size invariance;
-- float32 behavior;
-- T-junction recovery;
-- interior-interior shared-vertex recovery;
-- bridge versus true-junction topology regressions;
-- parallel-edge handling;
-- closed rings, and rings whose ends are only nearly closed;
-- junctions whose two copies differ by floating-point noise;
-- lines that end on one of their own interior vertices;
-- pruning bounds checked against a sweep of every edge;
-- float32 median memory use and summation precision;
-- disconnected networks;
-- CRS and unit handling;
-- sliver and self-loop filtering;
-- worker and memory-control validation;
-- command-line runs, including one-line error messages for unreadable input and unwritable output;
-- package metadata checks.
-
-Run:
-
 ```bash
+python -m pip install -e ".[dev]"
+python -m pip check
+python -m ruff check .
 python -m pytest -q
 ```
 
-See `docs/VALIDATION.md` for the validation philosophy and `docs/ALGORITHMS.md` for the full mathematical and bibliographic discussion.
+The merged adaptive implementation recorded 201 passing tests on the [post-merge CI run](https://github.com/miraflor/net-center/actions/runs/45778162775), with Python 3.10–3.13 jobs and the wheel/source-distribution smoke test successful. That count refers to the tested revision, not a promise for every future run. See [validation](docs/VALIDATION.md) for test coverage and limits. Exact versus heuristic guarantees are deliberately distinguished.
 
----
+## Scientific references
 
-## References
+- Hakimi, S. L. (1964). Optimum Locations of Switching Centers and the Absolute Centers and Medians of a Graph. *Operations Research*, 12(3), 450–459. https://doi.org/10.1287/opre.12.3.450
+- Hakimi, S. L. (1965). Optimum Distribution of Switching Centers in a Communication Network and Some Related Graph Theoretic Problems. *Operations Research*, 13(3), 462–475. https://doi.org/10.1287/opre.13.3.462
+- Kariv, O., & Hakimi, S. L. (1979). An Algorithmic Approach to Network Location Problems. I: The p-Centers. *SIAM Journal on Applied Mathematics*, 37(3), 513–538. https://doi.org/10.1137/0137040
+- Handler, G. Y., & Mirchandani, P. B. (1979). *Location on Networks: Theory and Algorithms*. MIT Press.
+- Teitz, M. B., & Bart, P. (1968). Heuristic Methods for Estimating the Generalized Vertex Median of a Weighted Graph. *Operations Research*, 16(5), 955–961. https://doi.org/10.1287/opre.16.5.955
+- Kaufman, L., & Rousseeuw, P. J. (1990). *Finding Groups in Data*. Wiley.
+- Tibshirani, R., Walther, G., & Hastie, T. (2001). Estimating the Number of Clusters in a Data Set via the Gap Statistic. *JRSS B*, 63(2), 411–423. https://doi.org/10.1111/1467-9868.00293
+- Daskin, M. S. (2013). *Network and Discrete Location*, 2nd ed. Wiley.
 
-Bentley, J. L., & Ottmann, T. A. (1979). Algorithms for reporting and counting geometric intersections. *IEEE Transactions on Computers*, C-28(9), 643–647.
-
-Daskin, M. S. (2013). *Network and Discrete Location: Models, Algorithms, and Applications* (2nd ed.). Wiley. https://doi.org/10.1002/9781118537015
-
-Dijkstra, E. W. (1959). A note on two problems in connexion with graphs. *Numerische Mathematik*, 1, 269–271.
-
-Hakimi, S. L. (1964). Optimum locations of switching centers and the absolute centers and medians of a graph. *Operations Research*, 12(3), 450–459. https://doi.org/10.1287/opre.12.3.450
-
-Hakimi, S. L. (1965). Optimum distribution of switching centers in a communication network and some related graph theoretic problems. *Operations Research*, 13(3), 462–475. https://doi.org/10.1287/opre.13.3.462
-
-Handler, G. Y., & Mirchandani, P. B. (1979). *Location on Networks: Theory and Algorithms*. MIT Press.
-
-Kariv, O., & Hakimi, S. L. (1979). An algorithmic approach to network location problems. I: The p-centers. *SIAM Journal on Applied Mathematics*, 37(3), 513–538. https://doi.org/10.1137/0137040
-
-Kariv, O., & Hakimi, S. L. (1979). An algorithmic approach to network location problems. II: The p-medians. *SIAM Journal on Applied Mathematics*, 37(3), 539–560. https://doi.org/10.1137/0137041
-
-Virtanen, P., Gommers, R., Oliphant, T. E., et al. (2020). SciPy 1.0: Fundamental algorithms for scientific computing in Python. *Nature Methods*, 17, 261–272. https://doi.org/10.1038/s41592-019-0686-2
-
----
+The algorithms are established formulations and heuristics; the specific network reference distribution, normalized selection criterion and engineering safeguards are implementation choices, not claims of new location theorems. Additional sources and software provenance are in [Algorithms](docs/ALGORITHMS.md).
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
 
 ## Author and Citation
 
@@ -745,3 +238,5 @@ College of Engineering
 University of the Philippines Diliman
 
 **net-center** is authored and maintained by James Matthew Miraflor, with AI assistance in software development, debugging, testing, and documentation. Responsibility for the project's methodological decisions, scientific validity, and published outputs rests with the author.
+
+When citing software, record the repository URL, release or commit SHA, and the specific algorithm and settings used. This guide describes the merged adaptive code, which has not yet been assigned a new release number.

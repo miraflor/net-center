@@ -2,9 +2,29 @@
 
 All notable changes to this repository are recorded here.
 
+## Unreleased — adaptive network location and representation
+
+### Added
+
+- Independent adaptive numerical APIs and GIS module CLI with finite edge-interior demand and candidate attachment, validated augmentation, physical edge lineage and explicit connector distances.
+- Streaming exact weighted 1-median and vertex minimax, safe single-median pruning, and grouped continuous absolute 1-center wrapper around the original exact solver.
+- Weighted finite-candidate multiple medians and medoids, heuristic BUILD/SWAP and bounded exact enumeration, explicit group candidate universes and component allocation over evaluated cost curves.
+- Fixed, balanced, access-budget, penalized and network-medoid Gap site-count policies; explicit zero-weight component convention, row and mass coverage, access percentiles and execution diagnostics.
+- Adaptive schema `net-center-adaptive/5`, complete no-clobber JSON publication, and 90 adaptive regression/integration tests.
+- Numerical and GIS adaptive examples and unified technical documentation.
+
+### Fixed
+
+- CI package smoke test installs declared dependencies and imports the installed wheel from outside the checkout in isolated mode. The post-merge implementation run passed all five CI jobs, including a 201-test Python 3.12 run.
+- Align current documentation, assumptions, validation, metadata description and development guidance with both workflows; retain the existing single-center implementation and historical review.
+
+### Compatibility
+
+The legacy `net-center` CLI, top-level API and runtime dependency declarations remain unchanged. The adaptive interface is available through its submodules and `python -m net_center.adaptive_cli`. The version remains 0.2.0 until a subsequent explicit release decision.
+
 ## 0.2.0 — 2026-10-01
 
-Changes from a code review in September 2026. The version number is still 0.1.0.
+Changes from a code review in September 2026, released as 0.2.0.
 
 ### Fixed
 

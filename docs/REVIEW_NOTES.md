@@ -1,5 +1,7 @@
 # Review notes for v0.1.0
 
+> Historical review of the original single-center release, not a statement of the current package scope. For current features and limitations see [README](../README.md), [Adaptive location](ADAPTIVE_LOCATION.md) and [Validation](VALIDATION.md).
+
 This file records the pre-release review and hardening work that led to the
 first public release of `netcenter` (now `net-center`), v0.1.0.
 

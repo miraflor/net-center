@@ -1,79 +1,46 @@
-# Validation strategy
+# Validation strategy and evidence
 
-The dangerous failures in a network-location package are usually plausible
-wrong answers rather than crashes. The test suite therefore mixes mathematical
-checks, GIS/topology regressions, memory/execution checks, and packaging checks.
+Network location software can return plausible but incorrect answers. Tests cover independent mathematical reference cases, network topology, input contracts, diagnostics, execution and distribution installation. Exactness claims are conditional on modeled topology, candidates and numerical tolerance; the heuristic is not guaranteed globally optimal.
 
-## Mathematical checks
+## Original single-center suite
 
-- hand-computable path and triangle examples;
-- weighted-median movement under changed weights;
-- twelve random networks compared against independent brute-force sampling at
-  4,001 locations on every segment;
-- the absolute centre may never be worse than the vertex centre;
-- serial/parallel and large/small sweep blocks must agree;
-- float32 storage is checked on a known case;
-- float32 median sums are accumulated in float64, without a full-size float64
-  copy of the matrix;
-- both pruning bounds never exceed the exact minimum of any segment, and the
-  pruned result equals a sweep of every segment;
-- the parallel sweep is exercised on a network where no segment can be pruned;
-- invalid matrices, edges, weights, and worker settings fail loudly.
+The original 111 tests cover weighted medians, vertex and absolute centers, hand-computable paths and triangles, random networks compared with dense edge sampling, safe pruning bounds and pruned/unpruned sweeps, float32 storage and float64 accumulation, parallel/block invariance, memory estimates and invalid inputs. GIS cases cover shared vertices, grade-separated crossings, rings and self-touching lines, slivers, parallel edges, CRS, component ranking and tolerance. CLI and package tests verify input/output handling, metadata and public callable interfaces. Dense sampling is a numerical reference, not a proof of exactness.
 
-## GIS/topology regressions
+## Adaptive suite
 
-- a plain geometric crossing is disconnected by default;
-- explicit planar noding connects that crossing;
-- a shared endpoint-to-interior T-junction is recovered;
-- a shared interior-to-interior X-junction is recovered;
-- a bridge-like crossing with no shared source vertex remains disconnected;
-- ordinary shape vertices on a single road do not become graph nodes;
-- closed and nearly closed rings survive preprocessing;
-- empty geometries do not shift endpoint indexing;
-- filtered slivers do not leave orphaned graph nodes;
-- largest-component selection follows total road length;
-- metric CRS behavior and invalid target CRSs are tested;
-- non-finite demand coordinates and invalid snap settings are rejected;
-- a tiny snap distance merges only identical coordinates;
-- a junction whose two copies differ by floating-point noise stays connected;
-- a ring whose ends are one location is split, not deleted;
-- a line that ends on one of its own interior vertices is split there;
-- closely spaced vertices of one line are not merged into one location;
-- node numbering matches v0.1.0 and does not depend on input order;
-- vectorised line cutting matches a piece-by-piece reference.
+The 90 adaptive tests present at the merged revision are in `tests/test_adaptive_expansion.py` and `tests/test_adaptive_integration.py`. They cover:
 
-## Distance/memory checks
+- ordered physical edge geometry, stale snap metadata, transitive merges, split lineage, distance preservation and original component ranking;
+- streaming median and minimax comparisons with dense reference calculations, pruning on/off, weighted duplicate rows, connectors, exact small multi-median enumeration and heuristic cost curves;
+- candidate restrictions, independent group domains, component allocation and explicit zero-weight component convention;
+- fixed, balanced, budget, penalized and Gap selection; reference support, reproducibility, cap and infeasible cases;
+- configuration versus executed-solver audit, finite/nonfinite JSON, coverage, row assignments, weighted access quantiles and no-clobber output;
+- actual repository integration with the existing `Network` and exact absolute-center solver, legacy comparison, CLI restrictions and GIS inputs.
 
-- bounded Dijkstra chunking matches effectively unbounded calculation;
-- float32 storage is supported;
-- matrix-size estimates are tested;
-- threaded parallel chunks match serial output;
-- a parallel request that fits in one memory block is still split across
-  workers;
-- directed Dijkstra equals SciPy's undirected mode;
-- invalid temporary-memory and worker settings are rejected;
-- duplicate demand nodes are consolidated while preserving median counts and
-  supplied weights.
+The tests support the stated numerical contracts but do not guarantee a global optimum for BUILD/SWAP, a correct real-world road model, or national-scale runtime. Gap results depend on null support, seed, loss variant and candidate universe. Budget failure is limited to evaluated curves.
 
-## Command-line checks
+## Verified CI evidence
 
-- solving from GeoPackage input and writing GeoPackage output;
-- demand layers with a weight field;
-- one-line error messages for a missing input file, an unwritable output path,
-  and a missing weight field;
-- the command line and the Python API agree.
+The merged commit `e7710b9b436f1b344d60d2327babb42e0e36f266` passed the [post-merge main run](https://github.com/miraflor/net-center/actions/runs/45778162775): all four Python jobs (3.10, 3.11, 3.12, 3.13) and the package job succeeded. The Python 3.12 job log reports **201 passed**, no skips. The wheel and source distribution built successfully; the installed-wheel smoke test imported from `site-packages`, and `pip check` succeeded. The preceding PR and push runs also passed after the CI dependency/smoke-test correction. These are historical observations for that commit, not results from future documentation or code changes.
 
-## Packaging checks
-
-- the public `solve` symbol remains callable;
-- exported `net_center.__version__` matches installed package metadata;
-- CI lints, compiles, tests, exercises the CLI, and builds the package.
-
-## Run locally
+## Local validation
 
 ```bash
+python -m pip install -e ".[dev]"
+python -m pip check
+python -m ruff check .
+python -m compileall -q net_center examples
 python -m pytest -q
+python -m net_center.cli --version
+python -m net_center.cli --help
+python -m net_center.adaptive_cli --help
+python examples/quickstart.py
+python examples/adaptive_quickstart.py
+python examples/adaptive_gis.py
 ```
 
-A clean tree reports **111 passed** with the development dependencies
-installed.
+Use fail-fast execution; check each exit status. The editable installation matters: otherwise the package metadata test can skip and the version may be `0+unknown`. Ensure GIS dependencies and drivers are present to avoid skipped integration tests. CI also builds the distribution and runs an isolated import/CLI smoke test outside the source tree. A skipped or missing required check is not successful validation.
+
+## Reproducibility checklist
+
+Record the exact commit/release, Python and dependency versions, input graph and demand/candidate data fingerprints, CRS, topology tolerance, maximum snap distance, component/coverage policy, candidate domain, objective and connector treatment, site-count rule, bounds, seed and solver options. The adaptive schema records configuration and execution separately but does not hash input files. Persist the raw inputs or an immutable provenance record separately. Report both modeled and full-input mass/row coverage. Do not compare objectives across different demand subsets or incompatible connector and candidate conventions.
