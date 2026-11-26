@@ -1,10 +1,10 @@
 # Adaptive network location and representation
 
-This additive extension supplies weighted network median and representative-site
+The adaptive workflow supplies weighted network median and representative-site
 optimization. It does not change the existing `net-center` CLI or the exact
-absolute 1-center implementation. A new wrapper exposes that same solver for
+absolute 1-center implementation. A wrapper exposes that same solver for
 continuous group/component minimax problems with optional connector costs.
-Its separate CLI is:
+For installation use `python -m pip install -e ".[gis]"` from the repository root. The numerical API also works with the core-only installation. See [README](../README.md), [network assumptions](NETWORK_ASSUMPTIONS.md) and [the unified technical note](TECHNICAL_NOTE.pdf). Its separate CLI is:
 
 ```bash
 python -m net_center.adaptive_cli --help
@@ -58,8 +58,9 @@ Given demand nodes q_i and nonnegative weights w_i, a set S of sites minimizes
 (original and group-own demand vertices in GIS, all supplied vertices by
 default in numerical calls), `demand` (distinct observed locations), or
 `restricted` (explicit candidate IDs in Python or a GIS candidate point layer). The latter two do not
-claim to optimize over every road vertex. For k=1 a connected component is
-solved exactly by streaming weighted shortest-path reductions. In the
+claim to optimize over every road vertex. When only k=1 is evaluated in a component, it is solved exactly by streaming
+weighted shortest-path reductions. A multi-site curve also evaluates k=1
+exactly, using its dense distance matrix. In the
 unweighted `vertex_center` problem the maximum distance is minimized instead;
 all demand rows, including zero-weight rows, count for minimax. General
 k-center is not implemented. The existing absolute 1-center solver remains
@@ -83,11 +84,11 @@ node IDs; swap improvements have a numerical tolerance.
   `RoutingContext` / `solve_groups`. The GIS CLI uses original physical lengths,
   including parallel physical links, before demand augmentation and pins that
 rank after verifying the split inventory. Metadata must reconstruct exactly
-the same minimum-parallel-edge CSR; self-loops and missing or extra pairs
-are rejected. A collapsed CSR cannot prove the existence of longer parallel
-physical links; numerical callers remain responsible for their provenance.
-Excluded rows
-  retain assignment -1 and infinite access; coverage is based on original mass.
+  the same minimum-parallel-edge CSR; self-loops and missing or extra pairs
+  are rejected. A collapsed CSR cannot prove the existence of longer parallel
+  physical links; numerical callers remain responsible for their provenance.
+  Excluded rows retain assignment -1 and infinite access; coverage is based on
+  original mass.
 - `per_component`: fixed k=1 per populated component (cap applies globally).
 - `allocate`: a global budget distributed among populated components. At least
   one site per component is mandatory. A dynamic program minimizes the sum
@@ -197,8 +198,8 @@ For continuous minimax use `solve_absolute_groups` or the CLI
 `--objective absolute_center`. This permits fixed one-center-per-component
 problems, not general k-center. The absolute CLI rejects explicitly supplied
 multi-site, Gap, penalty or median pruning options; it does not ignore them.
-The median and vertex paths follow the same rule: an option that the selected
-mode never uses is rejected, for example `--penalty` without `balanced`,
+The median and vertex paths follow the same rule for mode-inapplicable tuning
+options; an explicitly supplied option that the selected mode never uses is rejected, for example `--penalty` without `balanced`,
 `--min-members`, `--seed` or `--gap-replicates` without `gap`,
 `--max-combinations` without `--algorithm exact`, or `--algorithm`,
 `--swap-passes` and `--max-combinations` when every solve has one site (fixed

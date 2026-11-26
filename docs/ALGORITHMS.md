@@ -1,5 +1,7 @@
 # Algorithms, and who they belong to
 
+**Scope:** The original stages, complexity table and historical engineering audit below describe the legacy single-center workflow. The adaptive workflow is documented in the added section before References and in [Adaptive location](ADAPTIVE_LOCATION.md).
+
 Every algorithm in this package was invented by someone else, most of them
 decades ago. This document records what is used, who created it, and — kept
 carefully separate at the end — which parts are implementation work done with
@@ -400,6 +402,64 @@ Brute force is a genuinely independent check — it shares no code with the swee
 — but it only verifies the sweep given a distance matrix. It does not verify
 that the distance matrix describes the roads you meant. That remains the
 reviewer's job, and stage 1 is where the real risk lives.
+
+---
+
+## Adaptive location methods (current implementation)
+
+The preceding stages and their historical engineering audit describe the original single-site pipeline. The adaptive workflow shares the graph and absolute-center foundations but uses separate demand attachment, component, candidate and memory semantics. See [Adaptive location](ADAPTIVE_LOCATION.md) for the full API and output contracts and [the unified technical note](TECHNICAL_NOTE.pdf) for derivations.
+
+### Edge attachment and metric preservation
+
+`edge_snap.py` projects each demand/candidate observation to a physical edge, resolves exact ties by edge ID, and inserts unique accepted interior offsets. Subsegments retain the original edge's length in total and lineage; original-vertex shortest paths are preserved within floating-point tolerance. Ordered endpoints, physical lengths, CSR consistency and snap records are validated. Parallel physical edges remain distinct. This is geometric preprocessing, not a new routing algorithm. Finite demand positions are now vertices; continuous demand density is not implemented.
+
+### Streaming single-site optimization
+
+For demand weights $w_i$, attached nodes $q_i$, and eligible vertex $v$, minimize $J(v)=\sum_i w_i d_G(q_i,v)$ or the maximum distance. Instead of retaining the original full matrix, the adaptive solver reduces bounded Dijkstra batches to a score vector. For a feasible candidate $p$ and total positive mass $W$,
+
+```math
+J(v) \ge Wd_G(p,v)-J(p).
+```
+
+An improving candidate must lie within $2J(p)/W$ of $p$. A safe cutoff for demand-source searches is $\max_i d_G(p,q_i)+2J(p)/W$ plus the implementation's numerical margin. This follows directly from triangle inequalities; no novel published algorithm is claimed. Zero-weight rows are omitted from the weighted sum to avoid `0*inf` but retained for coverage. Vertex minimax streams a maximum and can include fixed connector offsets. The absolute-group wrapper adds the same offset to both endpoint distances of each demand (max offset at repeated nodes), which leaves the edge-switch difference unchanged. The original edge sweep and lower bounds therefore remain valid.
+
+### Multiple medians and medoids
+
+For finite candidate set $A$ and $S\subseteq A$ of size $k$, minimize
+
+```math
+J(S)=\sum_i w_i \min_{s\in S} d_G(q_i,s).
+```
+
+Demand-node candidates give weighted medoids; unrestricted supplied vertices or explicit restricted candidates give finite network medians. The GIS group-specific vertex universe contains original vertices plus the group's own attached demand vertices, not other groups' inserted positions. Greedy BUILD chooses sites with the best weighted improvement, followed by a bounded best-improving single SWAP loop (interchange/PAM-style methods; Teitz and Bart 1968, Kaufman and Rousseeuw 1990). Each larger curve point starts from the preceding site's set and adds a site; accepted swaps decrease cost. Distances are exact up to numerical precision, while the site set is heuristic. The exact alternative enumerates finite subsets after checking the sum of binomial counts against a per-component cap. The dense matrix has shape unique demand by eligible candidates; it is not a full graph all-pairs matrix unless those sets cover the graph.
+
+### Component curves and adaptive selection
+
+For demand-bearing components $c=1,\ldots,C$, finite coverage requires one site per component. Given available component costs $J_c(j)$, the allocation DP retains minimum cost and site tuples for every evaluated total $K$:
+
+```math
+F_c(K)=\min_j\{F_{c-1}(K-j)+J_c(j)\},\quad F_0(0)=0.
+```
+
+Only feasible counts within the cap enter. Exactness of allocation is relative to these curves. For a zero-weight component in a positive-mass median group, exactly one secondary connector-inclusive minimax site is required, with zero median cost. This extra modeling convention can constrain fixed-k feasibility.
+
+Let $J(K)=F_C(K)$, $n$ distinct modeled demand nodes, $W$ modeled mass, $a_i$ fixed connectors. Fixed selects a prescribed feasible count. Balanced minimizes $J(K)/J(C)+\lambda(K-C)/\max(1,n-C)$ for evaluated $K\le n$, with zero normalized loss when the baseline is zero. Access budget selects the first evaluated count satisfying $(J(K)+\sum_iw_ia_i)/W\le B$ up to numerical tolerance. Penalized minimizes $J(K)+fK$ (facility cost in weight-distance units). These criteria are explicit choices, not global statistical or optimization theorems beyond the evaluated curves.
+
+Gap is a network-medoid variant of Tibshirani, Walther and Hastie (2001). The dispersion is a weighted sum of unsquared network distances, not the squared Euclidean dispersion of the original formulation. Draw with replacement from component vertices, optionally restricted to the demand bounding box (GIS uses original vertices). Preserve row weights. For $B$ reference replicates, compute $g_j=\operatorname{mean}_b\log J^*_{jb}-\log J_j$ and $s_j=\operatorname{sd}_b(\log J^*_{jb})\sqrt{1+1/B}$ with the documented common positive floor. Select the smallest $j$ satisfying $g_j\ge g_{j+1}-s_{j+1}$, or audit upper-bound contact. Degenerate support and inadmissible splits can retain one site; exceeding the global cap fails. Null support is vertex-uniform, not length-uniform. The exact option is not used for Gap.
+
+### Access, coverage and numerical guarantees
+
+Each modeled row has nearest-site road distance $r_i$ and access $a_i+r_i$. Connector costs add a fixed term to the median but can move minimax solutions. Weighted mean and percentiles use positive modeled mass, and maximum access includes zero-weight rows. Exclusions are explicit; the GIS CLI records full-input coverage and attachment coverage. The solver recomputes the selected objective from routed assignments. Configured options and actual component solver paths are separately reported. Output publication is all-groups-or-error and no-clobber.
+
+The adaptive single-site path stores bounded distance blocks instead of a full persistent matrix. Multi-site and absolute component paths have dense matrix limits; combinatorial and memory gates do not imply a total RSS bound. The original complexity table above refers to the single-site path. Multi-site BUILD/SWAP depends on candidate and demand sizes, site counts and swap passes; exhaustive enumeration grows combinatorially; Gap repeats reference curves. General multi-site minimax, directed costs, target-terminated routing and out-of-core distances remain outside scope.
+
+### Additional methodological references
+
+- Hakimi (1965), *Optimum Distribution of Switching Centers in a Communication Network and Some Related Graph Theoretic Problems*. https://doi.org/10.1287/opre.13.3.462
+- Teitz and Bart (1968), *Heuristic Methods for Estimating the Generalized Vertex Median of a Weighted Graph*. https://doi.org/10.1287/opre.16.5.955
+- Kaufman and Rousseeuw (1990), *Finding Groups in Data*. Wiley.
+- Tibshirani, Walther and Hastie (2001), *Estimating the Number of Clusters in a Data Set via the Gap Statistic*. https://doi.org/10.1111/1467-9868.00293
+- R `cluster` [clusGap documentation](https://search.r-project.org/CRAN/refmans/cluster/html/clusGap.html), `d.power` and `Tibs2001SEmax`.
 
 ---
 

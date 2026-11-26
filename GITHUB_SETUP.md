@@ -1,50 +1,38 @@
-# Replacing an existing GitHub repo with this codebase
+# Development and contribution guide
 
-This ZIP is laid out as a **repository root**. There is no extra wrapper folder
-inside it.
-
-## Existing local repository
-
-1. Open the existing repo folder in File Explorer.
-2. Keep the hidden `.git` folder exactly where it is.
-3. Delete or replace the old project files **except `.git`**.
-4. Extract the replacement ZIP directly into the repo folder.
-5. Open GitHub Desktop and review the changed files.
-6. Open a terminal in the repo folder and run:
+Use Git rather than replacing a repository from an archive. Work on a clean feature branch and preserve local changes before updating.
 
 ```bash
-python -m pip uninstall -y netcenter
+git clone https://github.com/miraflor/net-center.git
+cd net-center
 python -m pip install -e ".[dev]"
+python -m pip check
+python -m ruff check .
+python -m compileall -q net_center examples
 python -m pytest -q
 python -m net_center.cli --help
+python -m net_center.adaptive_cli --help
+python examples/quickstart.py
+python examples/adaptive_quickstart.py
+python examples/adaptive_gis.py
 ```
 
-The first command removes the package installed under the old name `netcenter`. If that package is not installed, pip only prints a warning.
+Run each command only after its predecessor succeeds. On Windows PowerShell 5.1, check `$LASTEXITCODE` immediately after each native command; `$ErrorActionPreference = 'Stop'` alone does not turn a nonzero native exit code into a terminating exception.
 
-A clean tree should report **111 passed**.
+## Changes and review
 
-7. Commit only after the tests pass.
+1. Fetch origin and verify the intended base revision and clean tracked/index state. Create a feature branch; never reset away work or overwrite an unexpected file.
+2. Make only the intended changes, run tests and lint, and inspect the staged diff. Verify the exact staged file list and content before committing.
+3. Push only the verified commit, then verify the remote head. Open a PR against `main` with scope, assumptions and validation results.
+4. Require all expected CI jobs to complete successfully for the exact PR head before merging. Missing, pending, canceled, skipped or failing required checks block merge. No automatic bypass or force push.
+5. Verify the post-merge main CI before publishing releases.
 
-Suggested commit message:
+## Distribution validation
 
-```text
-Rename package to net-center and add provenance to README
-```
+Build with `python -m build`. Install the resulting wheel with its declared dependencies in a fresh environment; run `python -m pip check`. Smoke-test from outside the checkout using Python isolated mode (`python -I`) so imports resolve to the installed wheel rather than repository sources. The package CI implements this procedure and tests Python 3.10–3.13. For GIS integration, install the optional GIS dependencies in a separate test environment if necessary.
 
-Suggested description:
+The package version is defined in `pyproject.toml`. Keep release notes, metadata and tags consistent; do not publish a new release solely by changing a documentation heading. The current adaptive expansion is unreleased relative to version 0.2.0 metadata.
 
-```text
-Renames the distribution to net-center, the import package to net_center (directory netcenter/ became net_center/), and the command to net-center, to match the GitHub repository name. Adds a per-step provenance table and two references to the README. Rebuilds docs/TECHNICAL_NOTE.pdf from its source. See CHANGELOG.md, section Unreleased.
-```
+For the technical note, compile `docs/TECHNICAL_NOTE.tex` twice with pdfLaTeX, using a separate build directory; inspect the PDF before replacing the committed `docs/TECHNICAL_NOTE.pdf`.
 
-## New repository
-
-Create an empty GitHub repository, clone it, and place these files directly in
-the clone root. Do not add another wrapper directory around them.
-
-## Do not commit
-
-The supplied `.gitignore` excludes Python caches, virtual environments, build
-artifacts, and common local GIS outputs. Keep source datasets out of the repo
-unless they are deliberately small, redistributable fixtures with clear
-licensing.
+Do not commit caches, virtual environments, build directories or large local GIS inputs. Keep small fixtures redistributable and clearly licensed. See [validation](docs/VALIDATION.md) and [changelog](CHANGELOG.md).

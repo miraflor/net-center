@@ -1,96 +1,52 @@
 # Architecture
 
-`net-center` is deliberately layered so the mathematics, routing, and GIS code
-can be reviewed independently.
+The numerical implementation is deliberately separated from GIS, routing and publication. Two interfaces coexist; the adaptive workflow does not replace the original one.
 
-## Execution path
+## Execution paths
 
-```text
-road line file
-    |
-    v
-graph.py
-    |  CRS + geometry cleanup + source-topology recovery
-    |  -> Network arrays + sparse adjacency
-    v
-solve.py
-    |  demand validation and coalescing
-    v
-distances.py
-    |  SciPy Dijkstra -> demand x node distance matrix D
-    v
-center.py
-    |-- weighted_median(D)
-    |-- vertex_center(D)
-    `-- absolute_center(D, edges)
-    |
-    v
-solve.py
-    |  node / edge+t -> map x,y
-    v
-CLI / Python caller
+```mermaid
+flowchart TD
+    G[graph.py: linework to Network] --> L[Legacy node attachment]
+    L --> S[solve.py: coalesce demand]
+    S --> D[distances.py: Dijkstra matrix]
+    D --> C[center.py: exact single-site objectives]
+    C --> O[cli.py or Python results]
+    G --> E[edge_snap.py: attachment and augmentation]
+    E --> R[adaptive.py: validated component context]
+    R --> F[Finite candidates: single or multi-site curves]
+    E --> A[absolute_groups.py: continuous minimax]
+    A --> C2[center.py: exact edge sweep]
+    F --> Q[Group assignments and coverage]
+    C2 --> Q
+    Q --> J[adaptive_cli.py: complete JSON publication]
 ```
 
-## `topology.py`
+A numerical caller may bypass GIS and supply a symmetric positive-weight CSR graph directly to `solve_adaptive` or `solve_groups`, or a distance matrix to the original mathematical core.
 
-Pure numeric topology helper. It turns edge endpoint arrays into a CSR sparse
-matrix and collapses parallel graph connections by minimum length. No GIS
-dependency.
+## Shared foundations
 
-## `graph.py`
+- `topology.py`: numeric adjacency construction; minimum length across parallel connections, not summed duplicates.
+- `graph.py`: projected CRS, line cleanup, source-vertex junctions, optional planar noding, ring protection, transitive coordinate merging, graph compaction and optional largest-component retention. Physical edges remain distinct even if routing adjacency collapses parallel pairs.
+- `_checks.py`: input checks used by original numeric entry points.
+- `distances.py`: original bounded Dijkstra blocks, optional parallel scheduling and float32 storage, memory estimates and assembly of a persistent demand-by-node matrix.
+- `center.py`: original weighted median, vertex center and exact absolute-center edge sweep; lower bounds prune candidate edges. Does not import GIS libraries.
 
-The GIS boundary and therefore the highest-risk layer.
+## Legacy orchestration
 
-Responsibilities:
+`solve.py` consolidates repeated demand nodes, builds the distance matrix, invokes the original solvers and attaches map coordinates. `cli.py` handles GIS input, nearest-node demand, largest-component construction, progress and optional point output. Its public API and console entry point remain unchanged.
 
-- choose/validate a metre-based working CRS;
-- flatten line geometry and remove empties;
-- recover junctions already encoded as shared source vertices, including lines
-  that end on one of their own interior vertices;
-- optionally perform full planar noding when explicitly requested;
-- preserve closed and nearly closed rings;
-- apply one location rule (coordinates within the snap distance, transitively)
-  to node identity, shared-vertex junctions, and ring closure;
-- remove slivers/self-loops and compact orphaned node IDs;
-- select the largest connected component by road length;
-- provide node coordinates and edge interpolation back to map space.
+## Adaptive orchestration
 
-## `distances.py`
+`edge_snap.py` validates ordered physical geometry, edge lengths and CSR consistency. It projects demand and candidate points to edges and builds an augmented network with original edge IDs and start measures. Interior insertions preserve original routing distances within numerical tolerance. The original network is not mutated. Geometry operations use optional Shapely.
 
-Scheduling layer around `scipy.sparse.csgraph.dijkstra`.
+`adaptive.py` is GIS-independent. `RoutingContext` validates the symmetric CSR and caches component subgraphs. `solve_adaptive` handles one group, component policies, demand coalescing, candidate sets, streaming single-site reductions and finite-candidate dense multi-site curves. BUILD/SWAP and exact enumeration are alternative curve engines; a dynamic program allocates a site budget across component curves. Selection and routing verification follow. `solve_groups` reuses one context and returns original row indices plus results for each group; group-specific vertex universes avoid cross-group candidate contamination. Numerical callers supplying physical lengths must provide valid provenance for longer parallel edges that cannot be inferred from collapsed CSR.
 
-Responsibilities:
+`absolute_groups.py` validates actual physical geometry, builds component distance matrices and delegates the continuous minimax objective to `center.absolute_center`. Duplicate offsets are combined by maximum when included in the radius. It returns explicit node/edge location records and recomputed routed access diagnostics. It does not implement general k-center.
 
-- validate sparse graph and source indices;
-- estimate stored matrix memory;
-- break Dijkstra output into bounded float64 chunks;
-- cast each chunk promptly to the requested storage dtype;
-- call Dijkstra in directed mode, which is valid because the graph is checked
-  to be symmetric;
-- optionally parallelise large batches, with at least one block per worker;
-- stream parallel blocks directly into a preallocated final matrix.
+`adaptive_cli.py` handles input CRS, point and candidate layers, snapping/coverage audits, group orchestration, option validation and JSON serialization. All groups must succeed before no-clobber publication via hard link. The output schema is `net-center-adaptive/5`; the configured versus executed finite-site solver diagnostics are distinct. It does not modify input files or invent connections.
 
-## `center.py`
+## Memory and dependencies
 
-Mathematical core. It contains no GeoPandas/Shapely imports. Inputs are plain
-NumPy arrays, which keeps the location algorithms independently testable.
-Absolute-centre pruning applies a bound that costs one operation per edge
-before the bound that costs one operation per demand point per edge.
+The original numerical core and adaptive finite-site solver use NumPy/SciPy; the original parallel path also uses Joblib. GIS dependencies are optional. Legacy matrices and adaptive multi-site matrices have different controls. Streaming adaptive single-site solves still retain the graph, cached subgraphs and at least one shortest-path row. Dense and exact-enumeration gates are not process-RSS guarantees. General directed costs, graph contraction and target-terminated routing are outside the current architecture.
 
-## `_checks.py`
-
-Shared input checks: positive and non-negative integers, backend names,
-node-index arrays, and median weights. `center.py`, `distances.py`, `solve.py`,
-and `topology.py` all use them, so every entry point applies the same rule and
-raises the same message.
-
-## `solve.py`
-
-Small orchestration layer. It coalesces repeated demand nodes, builds `D`, calls
-the three location solvers, and attaches map coordinates to results.
-
-## `cli.py`
-
-No core modelling logic belongs here. It handles arguments, file loading,
-progress messages, and result writing. File errors from the GIS readers and
-writers are reported as one-line messages.
+See [Network assumptions](NETWORK_ASSUMPTIONS.md), [Algorithms](ALGORITHMS.md), [Adaptive location](ADAPTIVE_LOCATION.md) and [Validation](VALIDATION.md).
